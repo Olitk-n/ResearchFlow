@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Orchestrator"
+  short_description: "Build evidence-grounded, reproducible AI research workflows"
+  default_prompt: "Design or audit an AI research workflow with traceable evidence, reproducible experiments, and citation-safe manuscript outputs."

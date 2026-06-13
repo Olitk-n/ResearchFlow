@@ -1,0 +1,46 @@
+[project]
+name = "researchflow-api"
+version = "0.1.0"
+description = "Evidence-grounded local-first AI research automation API"
+requires-python = ">=3.12"
+dependencies = [
+  "argon2-cffi>=23.1.0",
+  "celery[redis]>=5.4.0",
+  "cryptography>=44.0.0",
+  "email-validator>=2.2.0",
+  "fastapi>=0.115.0",
+  "feedparser>=6.0.11",
+  "httpx>=0.28.0",
+  "jinja2>=3.1.5",
+  "langgraph>=0.4.0",
+  "litellm>=1.63.0",
+  "orjson>=3.10.15",
+  "psycopg[binary]>=3.2.5",
+  "pydantic-settings>=2.8.0",
+  "pypdf>=5.3.0",
+  "pyjwt>=2.10.1",
+  "python-multipart>=0.0.20",
+  "sqlmodel>=0.0.24",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.5",
+  "pytest-asyncio>=0.25.3",
+  "respx>=0.22.0",
+  "ruff>=0.9.9",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]

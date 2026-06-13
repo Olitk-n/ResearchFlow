@@ -1,0 +1,11 @@
+{
+  "name": "researchflow",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/web run build",
+    "lint": "npm --prefix apps/web run lint",
+    "test:web": "npm --prefix apps/web run test"
+  }
+}
+

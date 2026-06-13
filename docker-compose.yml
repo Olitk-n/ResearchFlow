@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: researchflow
+      POSTGRES_USER: researchflow
+      POSTGRES_PASSWORD: researchflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${RESEARCHFLOW_DOCKER_DATA:-D:/ResearchFlow/docker}/postgres:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U researchflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - ${RESEARCHFLOW_DOCKER_DATA:-D:/ResearchFlow/docker}/redis:/data
+
+  api:
+    build:
+      context: ./apps/api
+      args:
+        PYTHON_IMAGE: ${API_BASE_IMAGE:-python:3.12-slim}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://researchflow:researchflow@postgres:5432/researchflow
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      TASK_MODE: celery
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${RESEARCHFLOW_STORAGE:-D:/ResearchFlow/data}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NODE_IMAGE: ${WEB_BASE_IMAGE:-node:20-alpine}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./apps/api
+      args:
+        PYTHON_IMAGE: ${API_BASE_IMAGE:-python:3.12-slim}
+    command: uv run celery -A app.worker.celery_app worker --loglevel=INFO
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://researchflow:researchflow@postgres:5432/researchflow
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      TASK_MODE: celery
+    volumes:
+      - ${RESEARCHFLOW_STORAGE:-D:/ResearchFlow/data}:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
