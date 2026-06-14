@@ -163,7 +163,16 @@ async def generate_manuscript(
             "primary metric, confidence interval, baselines, effect size, statistical "
             "test, sample count, and seeds exactly as supplied. Do not dump raw JSON "
             "into prose and do not describe statistical significance unless the supplied "
-            "p-value and test support that wording."
+            "p-value and test support that wording. For submission mode, produce a "
+            "substantive manuscript rather than a synopsis: abstract 150-250 words, "
+            "introduction at least 400 words, related work at least 300 words, method at "
+            "least 500 words, results at least 450 words, limitations at least 200 words, "
+            "and conclusion at least 150 words. Cite at least three distinct supplied "
+            "papers in the manuscript text when three are available. Explain the task, "
+            "data split, baselines, metric definition, seeds, uncertainty, effect size, "
+            "statistical test, ablations, failure cases, and threats to validity. If the "
+            "supplied evidence cannot support a requested detail, state that limitation "
+            "instead of inventing content."
         ),
         prompt=(
             f"Target: {target}; mode: {mode}\nProject: {project.title}\n"

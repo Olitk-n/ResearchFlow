@@ -42,7 +42,11 @@ from app.providers.literature import (
 )
 from app.providers.llm import LLMConfig, ModelBudgetExceeded, complete_json
 from app.security import decrypt_secret, encrypt_secret, hash_password
-from app.services.artifacts import build_manuscript, build_results_tables
+from app.services.artifacts import (
+    build_manuscript,
+    build_pre_submission_review,
+    build_results_tables,
+)
 from app.services.data_prep import prepare_dataset
 from app.services.embeddings import index_papers, semantic_search
 from app.services.executors import execute_experiment
@@ -52,6 +56,7 @@ from app.services.experiment_agent import (
     validate_generated_code,
 )
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
+from app.services.manuscript_agent import ManuscriptDraft
 from app.services.open_access import safe_public_https_url
 from app.services.scientific_validity import (
     assess_topic_submission_readiness,
@@ -118,6 +123,52 @@ def test_failed_submission_proposes_actionable_similar_topics():
     assert all(item["suggested_track"] for item in alternatives)
     assert "example/agent-traces" in alternatives[0]["why_feasible"]
     assert "EI" in alternatives[0]["suggested_track"]
+
+
+def test_submission_review_rejects_short_sparsely_cited_manuscript(tmp_path):
+    draft = ManuscriptDraft(
+        title="Short draft",
+        abstract="A short abstract with one result.",
+        introduction="Prior work is discussed [paper1].",
+        related_work="One related work is cited [paper1].",
+        method="We ran a method.",
+        results="Accuracy was 0.8.",
+        limitations="The study is limited.",
+        conclusion="More work is needed.",
+        mode="submission",
+    )
+    results = {
+        "primary_metric": {"name": "accuracy", "value": 0.8},
+        "per_seed_metrics": [0.79, 0.8, 0.81],
+        "baseline_metrics": {"baseline_a": 0.7},
+        "uncertainty": {"lower": 0.78, "upper": 0.82},
+        "effect_size": {"name": "cohen_d", "value": 0.4},
+        "statistical_test": {"name": "t_test", "p_value": 0.03},
+        "ablation_results": [{"name": "a"}, {"name": "b"}],
+        "num_samples": 500,
+    }
+
+    review = build_pre_submission_review(
+        draft=draft,
+        target="arxiv",
+        quality_level="submission_candidate",
+        citation_keys=["paper1", "paper2", "paper3"],
+        unresolved_claims=[],
+        experiment_results=results,
+        experiment_root=tmp_path,
+        publication_name=None,
+        author_guide_url=None,
+    )
+
+    assert review["passed"] is False
+    assert review["recommendation"] == "major_revision"
+    assert review["evidence"]["used_citation_count"] == 1
+    assert review["evidence"]["manuscript_word_count"] < 1800
+    assert "baseline" in review["evidence"]["missing_result_mentions"]
+    assert any(
+        finding["category"] == "writing"
+        for finding in review["findings"]
+    )
 
 
 def test_model_key_hint_is_separate_from_ciphertext():

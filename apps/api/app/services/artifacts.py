@@ -844,6 +844,42 @@ def build_pre_submission_review(
     missing_result_fields = [field for field in required_result_fields if not results.get(field)]
     baseline_count = len(results.get("baseline_metrics") or {})
     ablation_count = len(results.get("ablation_results") or {})
+    sections = {
+        "abstract": draft.abstract,
+        "introduction": draft.introduction,
+        "related_work": draft.related_work,
+        "method": draft.method,
+        "results": draft.results,
+        "limitations": draft.limitations,
+        "conclusion": draft.conclusion,
+    }
+    section_word_counts = {
+        name: len(re.findall(r"\b[\w'-]+\b", text, flags=re.UNICODE))
+        for name, text in sections.items()
+    }
+    manuscript_word_count = sum(section_word_counts.values())
+    used_citations = sorted({
+        int(match)
+        for text in sections.values()
+        for match in re.findall(r"\[paper(\d+)\]", text)
+        if int(match) <= len(citation_keys)
+    })
+    result_text = draft.results.casefold()
+    required_result_mentions = {
+        "primary metric": bool(
+            (results.get("primary_metric") or {}).get("name")
+            and str((results.get("primary_metric") or {}).get("name")).casefold() in result_text
+        ),
+        "sample count": bool(
+            results.get("num_samples", results.get("sample_rows")) is not None
+            and str(results.get("num_samples", results.get("sample_rows"))) in draft.results
+        ),
+        "confidence interval": any(term in result_text for term in ("confidence interval", "interval", "ci")),
+        "baseline": "baseline" in result_text,
+        "effect size": any(term in result_text for term in ("effect size", "cohen", "cliff")),
+        "statistical test": any(term in result_text for term in ("p=", "p-value", "p value", "statistic")),
+        "ablation": any(term in result_text for term in ("ablation", "sensitivity")),
+    }
 
     if submission_mode and quality_level != "submission_candidate":
         add(
@@ -873,6 +909,13 @@ def build_pre_submission_review(
             f"Only {len(citation_keys)} verified references are available.",
             "Expand and verify the evidence library before making novelty or comparison claims.",
         )
+    if submission_mode and len(used_citations) < 3:
+        add(
+            "major",
+            "literature",
+            f"The manuscript text cites only {len(used_citations)} distinct verified papers.",
+            "Synthesize at least three directly relevant works in the introduction and related-work sections.",
+        )
     if submission_mode and experiment_root is None:
         add(
             "critical",
@@ -893,6 +936,41 @@ def build_pre_submission_review(
             "analysis",
             f"Only {ablation_count} ablation or sensitivity results are available.",
             "Add at least two ablations or sensitivity analyses that test the central method choices.",
+        )
+    if submission_mode and manuscript_word_count < 1800:
+        add(
+            "major",
+            "writing",
+            f"The manuscript contains only about {manuscript_word_count} words.",
+            "Expand the evidence-grounded argument, protocol, analysis, and limitations before venue formatting.",
+        )
+    section_minimums = {
+        "abstract": 120,
+        "introduction": 300,
+        "related_work": 250,
+        "method": 400,
+        "results": 350,
+        "limitations": 180,
+        "conclusion": 120,
+    }
+    for section, minimum in section_minimums.items():
+        if submission_mode and section_word_counts[section] < minimum:
+            add(
+                "major",
+                "writing",
+                f"The {section.replace('_', ' ')} section has about "
+                f"{section_word_counts[section]} words; the minimum review target is {minimum}.",
+                f"Expand the {section.replace('_', ' ')} section using verified evidence and experiment artifacts.",
+            )
+    if submission_mode and results and not all(required_result_mentions.values()):
+        missing_mentions = [
+            name for name, present in required_result_mentions.items() if not present
+        ]
+        add(
+            "major",
+            "results",
+            "The prose does not explicitly report: " + ", ".join(missing_mentions) + ".",
+            "Rewrite the results section so every required experimental field appears in readable prose.",
         )
     if len(draft.abstract.strip()) < 100:
         add(
@@ -948,10 +1026,17 @@ def build_pre_submission_review(
         ],
         "evidence": {
             "citation_count": len(citation_keys),
+            "used_citation_count": len(used_citations),
+            "used_citation_indices": used_citations,
             "unresolved_claim_count": len(unresolved_claims),
             "baseline_count": baseline_count,
             "ablation_count": ablation_count,
             "missing_result_fields": missing_result_fields,
+            "missing_result_mentions": [
+                name for name, present in required_result_mentions.items() if not present
+            ],
+            "manuscript_word_count": manuscript_word_count,
+            "section_word_counts": section_word_counts,
             "reproducibility_bundle_attached": experiment_root is not None,
         },
     }
