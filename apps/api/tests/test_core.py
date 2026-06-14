@@ -489,6 +489,76 @@ def test_builtin_real_task_baseline_emits_submission_protocol(tmp_path):
     assert result["baseline_metrics"]
 
 
+def test_builtin_classification_baseline_emits_submission_protocol(tmp_path):
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Classification baseline",
+        direction="agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Measured label baseline",
+        hypothesis="Labeled task rows support a reproducible classifier baseline.",
+        rationale="test",
+        confidence=0.8,
+        novelty_score=0.7,
+        feasibility_score=0.8,
+        estimated_cost="low",
+    )
+    preparation = DataPreparation(
+        project_id=project.id,
+        dataset_id=uuid4(),
+        status="completed",
+        row_count=240,
+        schema_json={
+            "prompt": {"types": {"str": 240}, "examples": ["easy task", "hard task"]},
+            "tool_count": {"types": {"int": 240}, "examples": [1, 3]},
+            "label": {"types": {"str": 240}, "examples": ["success", "failure"]},
+        },
+    )
+    draft = fallback_experiment(project, gap, preparation)
+    assert draft.code_origin == "auditable_classification_baseline"
+    assert draft.scientific_plan["evidence_class"] == "real_task"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    rows = []
+    for index in range(240):
+        success = index % 4 != 0
+        rows.append({
+            "prompt": "easy reliable tool" if success else "hard broken tool",
+            "tool_count": 1 if success else 5,
+            "label": "success" if success else "failure",
+        })
+    (data_dir / "prepared.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "run.py"
+    script.write_text(draft.code, encoding="utf-8")
+    run = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    result = json.loads(run.stdout.strip().splitlines()[-1])
+    spec = ExperimentSpec(
+        project_id=project.id,
+        gap_id=gap.id,
+        name=draft.name,
+        objective=draft.objective,
+        scientific_plan=draft.scientific_plan,
+    )
+    audit = audit_completed_run(spec, result)
+    assert audit.passed
+    assert audit.level == "reproducible_research"
+    assert result["primary_metric"]["name"] == "accuracy"
+    assert result["baseline_metrics"]["majority_class"]["accuracy"] < 1.0
+    assert len(result["per_seed_metrics"]) == 3
+
+
 def test_unrelated_dataset_requires_human_confirmation():
     project = ResearchProject(user_id=uuid4(), title="MOF study", direction="MOF CO2 uptake")
     gap = GapCandidate(
