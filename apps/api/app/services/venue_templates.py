@@ -88,6 +88,44 @@ def ensure_official_template(target: str, manuscript_root: Path) -> dict:
             "source": "built-in article scaffold",
             "official_template": False,
         }
+    publisher_scaffolds = {
+        "ieee_conference": {
+            "publisher": "IEEE",
+            "class_file": "IEEEtran",
+            "source_url": "https://template-selector.ieee.org/",
+            "author_guide": (
+                "https://conferences.ieeeauthorcenter.ieee.org/"
+                "write-your-paper/authoring-tools-and-templates/"
+            ),
+        },
+        "elsevier_journal": {
+            "publisher": "Elsevier",
+            "class_file": "elsarticle",
+            "source_url": (
+                "https://www.elsevier.com/researcher/author/"
+                "policies-and-guidelines/latex-instructions"
+            ),
+            "author_guide": (
+                "https://service.elsevier.com/app/answers/detail/a_id/5955/"
+                "supporthub/publishing/"
+            ),
+        },
+    }
+    if target in publisher_scaffolds:
+        profile = publisher_scaffolds[target]
+        metadata = {
+            "target": target,
+            **profile,
+            "official_template": False,
+            "publisher_scaffold": True,
+            "requires_specific_publication_check": True,
+            "prepared_at": datetime.now(UTC).isoformat(),
+        }
+        (manuscript_root / "venue-template.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return metadata
     profile = OFFICIAL_TEMPLATES[target]
     cache = get_settings().storage_root / "venue-templates" / f"{target}-{profile['year']}"
     archive = cache / "official-template.zip"

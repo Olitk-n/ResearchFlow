@@ -36,8 +36,17 @@ class GapSelection(BaseModel):
 
 
 class ManuscriptRequest(BaseModel):
-    target: Literal["arxiv", "iclr", "icml", "neurips"] = "arxiv"
+    target: Literal[
+        "arxiv",
+        "iclr",
+        "icml",
+        "neurips",
+        "ieee_conference",
+        "elsevier_journal",
+    ] = "arxiv"
     mode: Literal["draft", "submission"] = "draft"
+    publication_name: str | None = Field(default=None, max_length=300)
+    author_guide_url: str | None = Field(default=None, max_length=1000)
 
 
 class ExperimentRunRequest(BaseModel):

@@ -716,6 +716,26 @@ async def manuscript(
                     "findings": gate_audit.findings,
                 },
             )
+        if body.target in {"ieee_conference", "elsevier_journal"}:
+            if not body.publication_name or not body.author_guide_url:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "A specific publication name and its HTTPS author guide "
+                            "are required for a submission package."
+                        ),
+                        "findings": [
+                            "Generic publisher templates cannot prove compliance with a specific venue.",
+                            "Select the exact conference or journal before generating submission mode.",
+                        ],
+                    },
+                )
+            if not body.author_guide_url.startswith("https://"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Author guide URL must use HTTPS.",
+                )
     experiment_results = completed_run.results if completed_run else None
     model_config = default_model_config(session, project.user_id)
     try:
@@ -770,6 +790,8 @@ async def manuscript(
                 if gate_audit
                 else (completed_run.quality_level if completed_run else "concept_draft")
             ),
+            publication_name=body.publication_name,
+            author_guide_url=body.author_guide_url,
         )
     except TemplateUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

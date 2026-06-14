@@ -177,11 +177,81 @@ responsible for verification, originality, and all scientific claims.
 \end{document}
 """
 
+IEEE_CONFERENCE_TEMPLATE = r"""
+\documentclass[conference]{IEEEtran}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\title{ {{ title }} }
+\author{\IEEEauthorblockN{Anonymous Authors}}
+\begin{document}
+\maketitle
+\noindent\textbf{Evidence level: {{ quality_level }}.}
+\begin{abstract}
+{{ abstract }}
+\end{abstract}
+\section{Introduction}
+{{ introduction }}
+\section{Related Work}
+{{ related_work }}
+\section{Method}
+{{ method }}
+\section{Results}
+{{ results }}
+\section{Limitations}
+{{ limitations }}
+\section{Conclusion}
+{{ conclusion }}
+\section*{Generative AI Disclosure}
+Research ideation, literature triage, code drafting, and manuscript drafting
+were assisted by ResearchFlow. Human authors verified all claims and results.
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}
+"""
+
+ELSEVIER_JOURNAL_TEMPLATE = r"""
+\documentclass[preprint,12pt]{elsarticle}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\journal{ {{ publication_name }} }
+\begin{document}
+\begin{frontmatter}
+\title{ {{ title }} }
+\author{Anonymous Authors}
+\begin{abstract}
+{{ abstract }}
+\end{abstract}
+\end{frontmatter}
+\noindent\textbf{Evidence level: {{ quality_level }}.}
+\section{Introduction}
+{{ introduction }}
+\section{Related Work}
+{{ related_work }}
+\section{Method}
+{{ method }}
+\section{Results}
+{{ results }}
+\section{Limitations}
+{{ limitations }}
+\section{Conclusion}
+{{ conclusion }}
+\section*{Declaration of generative AI-assisted technologies}
+Research ideation, literature triage, code drafting, and manuscript drafting
+were assisted by ResearchFlow. Human authors verified all claims and results.
+\bibliographystyle{elsarticle-num}
+\bibliography{references}
+\end{document}
+"""
+
 MANUSCRIPT_TEMPLATES = {
     "arxiv": ARXIV_TEMPLATE,
     "iclr": ICLR_TEMPLATE,
     "icml": ICML_TEMPLATE,
     "neurips": NEURIPS_TEMPLATE,
+    "ieee_conference": IEEE_CONFERENCE_TEMPLATE,
+    "elsevier_journal": ELSEVIER_JOURNAL_TEMPLATE,
 }
 
 TARGET_PROFILES = {
@@ -204,6 +274,16 @@ TARGET_PROFILES = {
         "venue": "Conference on Neural Information Processing Systems",
         "anonymous": True,
         "page_limit": 9,
+    },
+    "ieee_conference": {
+        "venue": "Specific IEEE conference required",
+        "anonymous": True,
+        "page_limit": None,
+    },
+    "elsevier_journal": {
+        "venue": "Specific Elsevier journal required",
+        "anonymous": False,
+        "page_limit": None,
     },
 }
 
@@ -455,6 +535,8 @@ def build_manuscript(
     experiment_results: dict | None = None,
     experiment_root: Path | None = None,
     quality_level: str = "concept_draft",
+    publication_name: str | None = None,
+    author_guide_url: str | None = None,
 ) -> tuple[Path, bool, list[str]]:
     root = project_directory(project.id) / "manuscript" / target
     root.mkdir(parents=True, exist_ok=True)
@@ -493,6 +575,10 @@ def build_manuscript(
         limitations=latex_escape(draft.limitations, citation_keys),
         conclusion=latex_escape(draft.conclusion, citation_keys),
         quality_level=latex_escape(quality_level.replace("_", " "), citation_keys),
+        publication_name=latex_escape(
+            publication_name or "Specific publication not selected",
+            citation_keys,
+        ),
     )
     (root / "main.tex").write_text(tex.strip() + "\n", encoding="utf-8")
     (root / "references.bib").write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8")
@@ -510,6 +596,8 @@ def build_manuscript(
                 "manuscript_mode": draft.mode,
                 "experiment_results_present": experiment_results is not None,
                 "quality_level": quality_level,
+                "publication_name": publication_name,
+                "author_guide_url": author_guide_url,
             },
             indent=2,
         ),
@@ -558,6 +646,50 @@ def build_manuscript(
         encoding="utf-8",
     )
     copy_reproducibility_bundle(root, experiment_root)
+    submission_items = [
+        {"item": "Specific publication selected", "passed": bool(publication_name)},
+        {
+            "item": "Publication author guide recorded",
+            "passed": bool(author_guide_url and author_guide_url.startswith("https://")),
+        },
+        {"item": "Scientific validity gate passed", "passed": quality_level == "submission_candidate"},
+        {"item": "Claim-level provenance exported", "passed": True},
+        {"item": "Reproducibility bundle exported", "passed": bool(experiment_root)},
+        {"item": "Human author and affiliation details completed", "passed": False},
+        {"item": "Conflict of interest and funding statements reviewed", "passed": False},
+        {"item": "Publication indexing and current quartile verified manually", "passed": False},
+    ]
+    (root / "submission-checklist.json").write_text(
+        json.dumps(
+            {
+                "publication_name": publication_name,
+                "author_guide_url": author_guide_url,
+                "ready_for_human_submission": all(
+                    item["passed"] for item in submission_items
+                ),
+                "items": submission_items,
+                "warning": (
+                    "Indexing, quartile, scope fit, ethics declarations, and acceptance "
+                    "must be verified by the human authors."
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (root / "cover-letter.txt").write_text(
+        (
+            f"Dear Editor or Program Committee,\n\n"
+            f"Please consider the enclosed manuscript for {publication_name or '[PUBLICATION NAME]'}.\n"
+            f"The work studies: {gap.title}.\n"
+            "All quantitative claims are linked to the enclosed reproducibility artifacts. "
+            "The authors confirm that the manuscript is not simultaneously under review "
+            "elsewhere and will complete the publication-specific declarations before submission.\n\n"
+            "Sincerely,\n[CORRESPONDING AUTHOR]\n"
+        ),
+        encoding="utf-8",
+    )
     compiled = False
     pdflatex = find_executable("pdflatex")
     bibtex = find_executable("bibtex")

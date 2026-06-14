@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -999,6 +1000,71 @@ def test_official_venue_template_is_cached_and_hashed(tmp_path):
     assert len(metadata["archive_sha256"]) == 64
     assert (tmp_path / "iclr2026_conference.sty").exists()
     assert (tmp_path / "venue-template.json").exists()
+
+
+def test_publisher_scaffold_requires_specific_venue_check(tmp_path):
+    metadata = ensure_official_template("ieee_conference", tmp_path)
+    assert metadata["publisher"] == "IEEE"
+    assert metadata["publisher_scaffold"] is True
+    assert metadata["official_template"] is False
+    assert metadata["requires_specific_publication_check"] is True
+    stored = json.loads((tmp_path / "venue-template.json").read_text(encoding="utf-8"))
+    assert stored["source_url"].startswith("https://")
+
+
+def test_submission_package_contains_human_completion_checklist(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.artifacts.project_directory",
+        lambda _project_id: tmp_path,
+    )
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Submission package",
+        direction="agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Agent evaluation robustness",
+        hypothesis="A measured protocol improves robustness.",
+        rationale="test",
+        confidence=0.8,
+        novelty_score=0.7,
+        feasibility_score=0.8,
+        estimated_cost="low",
+        evidence_ids=["evidence-1"],
+    )
+    paper = PaperRecord(
+        project_id=project.id,
+        source="arxiv",
+        external_id="2601.00001",
+        title="Agent Evaluation",
+        abstract="A benchmark paper.",
+        authors=["Researcher"],
+        url="https://arxiv.org/abs/2601.00001",
+    )
+    root, _compiled, _keys = build_manuscript(
+        project,
+        gap,
+        [paper],
+        "elsevier_journal",
+        quality_level="submission_candidate",
+        publication_name="Example Applied AI Journal",
+        author_guide_url="https://example.test/author-guide",
+    )
+    checklist = json.loads(
+        (root / "submission-checklist.json").read_text(encoding="utf-8"),
+    )
+    assert checklist["publication_name"] == "Example Applied AI Journal"
+    assert checklist["ready_for_human_submission"] is False
+    assert any(
+        item["item"] == "Human author and affiliation details completed"
+        and not item["passed"]
+        for item in checklist["items"]
+    )
+    assert (root / "cover-letter.txt").exists()
+    assert "Example Applied AI Journal" in (
+        root / "main.tex"
+    ).read_text(encoding="utf-8")
 
 
 async def test_prepared_dataset_hash_matches_exact_file_bytes(monkeypatch):

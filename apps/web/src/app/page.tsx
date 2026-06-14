@@ -557,11 +557,21 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     }, token));
   }
 
-  async function generateManuscript(target: string, mode: "draft" | "submission") {
+  async function generateManuscript(
+    target: string,
+    mode: "draft" | "submission",
+    publicationName?: string,
+    authorGuideUrl?: string,
+  ) {
     if (!selected) return;
     await action("manuscript", () => api(`/projects/${selected.id}/manuscript`, {
       method: "POST",
-      body: JSON.stringify({ target, mode }),
+      body: JSON.stringify({
+        target,
+        mode,
+        publication_name: publicationName || null,
+        author_guide_url: authorGuideUrl || null,
+      }),
     }, token));
   }
 
@@ -965,11 +975,19 @@ function ManuscriptView({
   }>;
   hasCompletedRun: boolean;
   busy: boolean;
-  onGenerate: (target: string, mode: "draft" | "submission") => void;
+  onGenerate: (
+    target: string,
+    mode: "draft" | "submission",
+    publicationName?: string,
+    authorGuideUrl?: string,
+  ) => void;
   onDownload: () => void;
 }) {
   const [target, setTarget] = useState("arxiv");
   const [mode, setMode] = useState<"draft" | "submission">("draft");
+  const [publicationName, setPublicationName] = useState("");
+  const [authorGuideUrl, setAuthorGuideUrl] = useState("");
+  const requiresPublication = ["ieee_conference", "elsevier_journal"].includes(target);
   const latest = builds.at(-1);
   return (
     <div className="content-stack">
@@ -1011,6 +1029,8 @@ function ManuscriptView({
                 <option value="iclr">ICLR</option>
                 <option value="icml">ICML</option>
                 <option value="neurips">NeurIPS</option>
+                <option value="ieee_conference">IEEE / EI 会议</option>
+                <option value="elsevier_journal">Elsevier / SCI 期刊</option>
               </select>
             </label>
             <label>生成模式
@@ -1020,13 +1040,40 @@ function ManuscriptView({
               </select>
             </label>
           </div>
+          {requiresPublication && (
+            <div className="build-controls publication-controls">
+              <label>具体期刊或会议名称
+                <input
+                  value={publicationName}
+                  onChange={(event) => setPublicationName(event.target.value)}
+                  placeholder="例如：具体 IEEE 会议全称"
+                />
+              </label>
+              <label>官方作者指南网址
+                <input
+                  value={authorGuideUrl}
+                  onChange={(event) => setAuthorGuideUrl(event.target.value)}
+                  placeholder="https://..."
+                />
+              </label>
+            </div>
+          )}
+          {requiresPublication && mode === "submission" && (!publicationName || !authorGuideUrl) && (
+            <div className="constraint-note">
+              投稿模式必须指定具体出版物和官方作者指南；“SCI/EI”本身不是一种统一模板。
+            </div>
+          )}
           {!hasCompletedRun && <div className="constraint-note">尚无完成的实验运行，结果投稿模式已锁定。</div>}
           <ul>
             <li><Check />引用键与论文证据绑定</li>
             <li><Check />数字只来自已完成运行</li>
             <li><Check />附带 claim-provenance.json</li>
           </ul>
-          <button className="primary wide" onClick={() => onGenerate(target, mode)} disabled={busy}>
+          <button
+            className="primary wide"
+            onClick={() => onGenerate(target, mode, publicationName, authorGuideUrl)}
+            disabled={busy || (requiresPublication && mode === "submission" && (!publicationName || !authorGuideUrl))}
+          >
             {busy ? <LoaderCircle className="spin" /> : <Sparkles />}
             生成 {target.toUpperCase()} {mode === "draft" ? "草稿" : "投稿稿"}
           </button>
