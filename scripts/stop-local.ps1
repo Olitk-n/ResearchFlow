@@ -1,23 +1,26 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$processFile = Join-Path $root "work\local-processes.json"
+$apiRoot = Join-Path $root "apps\api"
+$webRoot = Join-Path $root "apps\web"
+$stopped = 0
 
-if (-not (Test-Path $processFile)) {
-    Write-Host "No ResearchFlow process record was found."
-    exit 0
-}
+foreach ($process in Get-CimInstance Win32_Process) {
+    $command = $process.CommandLine
+    if (-not $command) { continue }
 
-$record = Get-Content $processFile -Raw | ConvertFrom-Json
-foreach ($name in @("api", "web")) {
-    $processId = $record.$name
-    if (-not $processId) { continue }
-
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($process) {
-        Stop-Process -Id $processId
-        Write-Host "Stopped $name process ($processId)."
+    $isApi = $command.Contains($apiRoot) -and $command.Contains("uvicorn")
+    $isWeb = $command.Contains($webRoot) -and (
+        $command.Contains("next start") -or
+        $command.Contains("npm run start")
+    )
+    if ($isApi -or $isWeb) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped++
     }
 }
 
-Remove-Item -LiteralPath $processFile
-Write-Host "ResearchFlow stopped."
+if ($stopped) {
+    Write-Host "ResearchFlow stopped."
+} else {
+    Write-Host "ResearchFlow is not running."
+}

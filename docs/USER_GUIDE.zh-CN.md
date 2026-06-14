@@ -33,8 +33,11 @@ npm install --prefix apps/web
   <http://127.0.0.1:8000/docs>，当前 `.env` 如果配置 `API_PORT=8002`，则应打开
   <http://127.0.0.1:8002/docs>。
 
-启动后会出现两个运行窗口。关闭这两个窗口即可停止系统，也可以运行
-`.\scripts\stop-local.ps1` 停止由旧版脚本记录的进程。
+启动脚本会先生成稳定的生产版本，再自动检查网页样式和后端。停止系统：
+
+```powershell
+.\scripts\stop-local.ps1
+```
 
 如果 `.env` 中的 `API_PORT` 不是 `8000`，接口说明地址也要改成对应端口。
 
