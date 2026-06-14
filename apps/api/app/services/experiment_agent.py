@@ -682,12 +682,22 @@ def build_real_task_baseline(
     gap: GapCandidate,
     preparation: DataPreparation,
 ) -> ExperimentDraft | None:
-    ranking = build_ranking_baseline(project, gap, preparation)
-    if ranking is not None:
-        return ranking
+    boolean_relevance_fields = [
+        name
+        for name, descriptor in preparation.schema_json.items()
+        if any(term in name.casefold() for term in ("relevant", "correct"))
+        and "bool" in (descriptor.get("types") or {})
+    ]
+    if boolean_relevance_fields:
+        ranking = build_ranking_baseline(project, gap, preparation)
+        if ranking is not None:
+            return ranking
     classification = build_classification_baseline(project, gap, preparation)
     if classification is not None:
         return classification
+    ranking = build_ranking_baseline(project, gap, preparation)
+    if ranking is not None:
+        return ranking
     fields = numeric_fields(preparation)
     if preparation.row_count < 200 or len(fields) < 2:
         return None

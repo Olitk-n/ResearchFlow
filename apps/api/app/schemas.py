@@ -29,6 +29,10 @@ class ModelConfigCreate(BaseModel):
 class ProjectCreate(BaseModel):
     title: str
     direction: str
+    workflow_mode: Literal["submission_first"] = "submission_first"
+    target_track: Literal["ei_or_sci_q4", "sci_q3"] = "ei_or_sci_q4"
+    topic_flexibility: Literal["adjacent_allowed", "strict", "ask_first"] = "adjacent_allowed"
+    human_checkpoints: Literal["minimal", "stepwise"] = "minimal"
 
 
 class GapSelection(BaseModel):

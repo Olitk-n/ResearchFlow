@@ -279,7 +279,14 @@ function NewProjectModal({
     setBusy(true);
     const project = await api<Project>("/projects", {
       method: "POST",
-      body: JSON.stringify({ title, direction }),
+      body: JSON.stringify({
+        title,
+        direction,
+        workflow_mode: "submission_first",
+        target_track: "ei_or_sci_q4",
+        topic_flexibility: "adjacent_allowed",
+        human_checkpoints: "minimal",
+      }),
     }, token);
     onCreated(project);
     onClose();
@@ -289,12 +296,15 @@ function NewProjectModal({
       <form className="modal project-modal" onSubmit={submit}>
         <button className="close" type="button" onClick={onClose}><X /></button>
         <div className="modal-kicker"><Sparkles size={16} /> NEW RESEARCH</div>
-        <h2>开启一个研究方向</h2>
-        <p>系统会先检索前沿，再给出 3–5 个带证据的低覆盖候选课题。</p>
+        <h2>投稿目标向导</h2>
+        <p>系统会先验证数据和实验，再生成 3–5 条可执行投稿路线。</p>
         <label>项目名称<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
         <label>研究方向或关键词<textarea value={direction} onChange={(e) => setDirection(e.target.value)} rows={4} required /></label>
+        <div className="scope-note"><Check size={18} /><span>目标档次：EI / SCI 四区保底投稿包</span></div>
+        <div className="scope-note"><Check size={18} /><span>允许在相近方向内调整题目，以保证真实数据和实验可完成</span></div>
+        <div className="scope-note"><Check size={18} /><span>仅在课题、数据合法性和具体期刊三个节点需要你确认</span></div>
         <div className="scope-note"><ShieldCheck size={18} /><span>“研究空白”表示截至检索日期的低覆盖候选，不声称全球无人发表。</span></div>
-        <button className="primary wide" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Search />}创建并开始</button>
+        <button className="primary wide" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Search />}创建并验证投稿路线</button>
       </form>
     </div>
   );
@@ -348,16 +358,35 @@ function GapCard({
         <span>成本 <b>{gap.estimated_cost.split("：")[0]}</b></span>
       </div>
       {gap.submission_readiness?.level && (
-        <div className={`constraint-note ${gap.submission_readiness.passed ? "readiness-pass" : ""}`}>
+        <div className={`constraint-note ${
+          gap.submission_readiness.passed ? "readiness-pass" :
+          gap.submission_readiness.details?.blocker_type ? "" : "readiness-progress"
+        }`}>
           <b>
             {gap.submission_readiness.passed
-              ? "投稿规划：具备继续实验的基础"
-              : "投稿规划：当前选题暂不可直接投稿"}
+              ? "投稿路线：已成为投稿候选"
+              : gap.submission_readiness.details?.blocker_type
+                ? "投稿路线：需要用户提供外部资源"
+                : gap.submission_readiness.level === "building_submission_evidence"
+                  ? "投稿路线：正在生成投稿证据"
+                  : "投稿路线：正在验证数据与实验"}
           </b>
           {gap.submission_readiness.findings?.map((finding) => (
             <div key={finding}>• {finding}</div>
           ))}
-          {!gap.submission_readiness.passed && gap.alternative_topics?.length > 0 && (
+          {gap.submission_readiness.details?.pending_conditions?.map((item) => (
+            <div key={item}>下一步：{item}</div>
+          ))}
+          {!!gap.submission_readiness.details?.target_track && (
+            <div>目标档次：EI / SCI 四区投稿包</div>
+          )}
+          {!!gap.submission_readiness.details?.estimated_resources && (
+            <div>
+              预计资源：本机 {gap.submission_readiness.details.estimated_resources.memory_gb} GB 内存，
+              模型预算 ${gap.submission_readiness.details.estimated_resources.model_budget_usd}
+            </div>
+          )}
+          {!!gap.submission_readiness.details?.blocker_type && gap.alternative_topics?.length > 0 && (
             <details>
               <summary>查看相似可行选题</summary>
               {gap.alternative_topics.map((topic, index) => (

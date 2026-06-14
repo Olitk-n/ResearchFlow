@@ -36,7 +36,7 @@ from ..providers.literature import aggregate_literature, deduplicate_papers
 from ..providers.llm import LLMConfig, complete_json
 from ..security import decrypt_secret
 from .artifacts import build_experiment_package
-from .data_prep import choose_dataset, prepare_dataset
+from .data_prep import can_auto_use, prepare_dataset
 from .embeddings import index_papers
 from .experiment_agent import baseline_path_diagnostics, generate_experiment
 from .gaps import (
@@ -186,6 +186,9 @@ def set_checkpoint(
     *,
     state: dict | None = None,
     requires_action: bool = False,
+    auto_repair_count: int = 0,
+    fallback_topic_id: UUID | None = None,
+    next_action: str | None = None,
     error: str | None = None,
 ) -> WorkflowCheckpoint:
     checkpoint = WorkflowCheckpoint(
@@ -196,11 +199,92 @@ def set_checkpoint(
         status=status,
         state=state or {},
         requires_action=requires_action,
+        auto_repair_count=auto_repair_count,
+        fallback_topic_id=fallback_topic_id,
+        next_action=next_action,
         error=error,
     )
     session.add(checkpoint)
     session.commit()
     return checkpoint
+
+
+async def prepare_first_available_dataset(
+    session: Session,
+    project: ResearchProject,
+    workflow_run_id: UUID,
+    candidates: list[DatasetAsset],
+) -> tuple[DatasetAsset, DataPreparation]:
+    failures: list[dict[str, str]] = []
+    for attempt, candidate in enumerate(candidates, start=1):
+        emit(
+            session,
+            project.id,
+            "data_processing",
+            f"正在准备数据集 {candidate.name}",
+            attempt=attempt,
+            candidate_count=len(candidates),
+            license=candidate.license,
+        )
+        try:
+            preparation = await prepare_dataset(project.id, candidate)
+            session.add(preparation)
+            session.commit()
+            session.refresh(preparation)
+            if preparation.status == RunStatus.COMPLETED:
+                return candidate, preparation
+            reason = str(preparation.profile_json.get("reason") or "blocked")
+        except Exception as exc:
+            reason = str(exc) or type(exc).__name__
+        failures.append({"dataset": candidate.name, "reason": reason[:500]})
+        set_checkpoint(
+            session,
+            project.id,
+            workflow_run_id,
+            "plan",
+            "data_processing",
+            "retrying",
+            state={"failures": failures},
+            auto_repair_count=attempt,
+            next_action="自动尝试下一个许可明确的数据集",
+        )
+    raise RuntimeError(
+        "all licensed dataset candidates failed preparation: "
+        + json.dumps(failures, ensure_ascii=False)
+    )
+
+
+async def expand_submission_dataset_search(
+    direction: str,
+    primary_query: str,
+    *,
+    limit: int = 12,
+) -> tuple[list, list[str]]:
+    queries = [
+        primary_query,
+        f"{direction} benchmark results success score cost latency",
+        f"{direction} trajectories labels robustness evaluation",
+    ]
+    results = await asyncio.gather(
+        *(aggregate_datasets(query, limit=limit) for query in queries),
+        return_exceptions=True,
+    )
+    merged = {}
+    errors: list[str] = []
+    for query, result in zip(queries, results, strict=True):
+        if isinstance(result, Exception):
+            errors.append(f"{query}: {type(result).__name__}")
+            continue
+        datasets, source_errors = result
+        errors.extend(f"{query}: {item}" for item in source_errors)
+        for dataset in datasets:
+            key = (dataset.source, dataset.external_id.casefold())
+            current = merged.get(key)
+            if current is None or int(dataset.metadata.get("relevance_score") or 0) > int(
+                current.metadata.get("relevance_score") or 0
+            ):
+                merged[key] = dataset
+    return list(merged.values()), errors
 
 
 def pause_if_requested(
@@ -628,6 +712,44 @@ async def discover_project(project_id: UUID) -> None:
             ):
                 return
 
+            dataset_candidates, dataset_errors = await expand_submission_dataset_search(
+                project.direction,
+                project.direction,
+                limit=8,
+            )
+            for item in dataset_candidates:
+                session.add(
+                    DatasetAsset(
+                        project_id=project.id,
+                        source=item.source,
+                        external_id=item.external_id,
+                        name=item.name,
+                        url=item.url,
+                        license=item.license,
+                        size_hint=item.size_hint,
+                        quality_notes=item.quality_notes,
+                        metadata_json=item.metadata,
+                    )
+                )
+            session.commit()
+            route_datasets = session.exec(
+                select(DatasetAsset).where(DatasetAsset.project_id == project.id)
+            ).all()
+            set_checkpoint(
+                session,
+                project.id,
+                workflow_run_id,
+                "discover",
+                "dataset_validation",
+                "completed",
+                state={
+                    "dataset_count": len(route_datasets),
+                    "licensed_count": sum(can_auto_use(item) for item in route_datasets),
+                    "source_errors": dataset_errors,
+                },
+                next_action="生成绑定真实数据和可运行实验的投稿路线",
+            )
+
             try:
                 drafts = await model_gap_drafts(
                     project,
@@ -673,6 +795,13 @@ async def discover_project(project_id: UUID) -> None:
             )
             for gap, validation in zip(gaps, validations, strict=True):
                 gap.confidence = validation.validated_confidence
+                readiness = assess_topic_submission_readiness(
+                    project,
+                    gap,
+                    route_datasets,
+                )
+                gap.submission_readiness = readiness.as_dict()
+                gap.alternative_topics = readiness.details["alternatives"]
                 session.add(gap)
                 session.add(validation)
             project.status = ProjectStatus.AWAITING_TOPIC
@@ -798,7 +927,11 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
             )
 
             dataset_query = f"{project.direction} {gap.title} {gap.hypothesis}"
-            datasets, errors = await aggregate_datasets(dataset_query, limit=4)
+            datasets, errors = await expand_submission_dataset_search(
+                project.direction,
+                dataset_query,
+                limit=12,
+            )
             for item in datasets:
                 session.add(
                     DatasetAsset(
@@ -842,7 +975,27 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
             ):
                 return
 
-            selected_dataset = choose_dataset(assets, minimum_relevance=2)
+            eligible_assets = [
+                item for item in assets
+                if can_auto_use(item)
+                and int(item.metadata_json.get("relevance_score") or 0) >= 2
+            ]
+            eligible_assets.sort(
+                key=lambda item: (
+                    sum(
+                        keyword in f"{item.name} {item.external_id}".casefold()
+                        for keyword in ("results", "benchmark", "critic", "evaluation")
+                    )
+                    - sum(
+                        keyword in f"{item.name} {item.external_id}".casefold()
+                        for keyword in ("survey", "pretraining", "prompt-collection")
+                    ),
+                    int(item.metadata_json.get("relevance_score") or 0),
+                    int(item.metadata_json.get("downloads") or 0),
+                ),
+                reverse=True,
+            )
+            selected_dataset = eligible_assets[0] if eligible_assets else None
             if not selected_dataset:
                 readiness = assess_topic_submission_readiness(project, gap, assets)
                 gap.submission_readiness = readiness.as_dict()
@@ -864,10 +1017,12 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
                 f"正在处理数据集 {selected_dataset.name}",
                 license=selected_dataset.license,
             )
-            preparation = await prepare_dataset(project.id, selected_dataset)
-            session.add(preparation)
-            session.commit()
-            session.refresh(preparation)
+            selected_dataset, preparation = await prepare_first_available_dataset(
+                session,
+                project,
+                workflow_run_id,
+                eligible_assets,
+            )
             dataset_audit = audit_dataset_fit(project, gap, selected_dataset, preparation)
             audit_payload = dataset_audit.as_dict()
             audit_payload["details"] = {

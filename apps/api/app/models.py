@@ -101,6 +101,19 @@ class ResearchProject(SQLModel, table=True):
     user_id: UUID = Field(foreign_key="user.id", index=True)
     title: str
     direction: str
+    workflow_mode: str = "submission_first"
+    target_track: str = "ei_or_sci_q4"
+    topic_flexibility: str = "adjacent_allowed"
+    human_checkpoints: str = "minimal"
+    compute_profile: dict = Field(
+        default_factory=lambda: {
+            "cpu_threads": 8,
+            "memory_gb": 10,
+            "gpu": "optional_rtx_3060_6gb",
+            "cloud_spend_allowed": False,
+        },
+        sa_column=Column(JSON),
+    )
     status: ProjectStatus = Field(default=ProjectStatus.DRAFT, index=True)
     selected_gap_id: UUID | None = Field(default=None, foreign_key="gapcandidate.id")
     search_queries: list[str] = Field(default_factory=list, sa_column=Column(JSON))
@@ -125,6 +138,9 @@ class WorkflowCheckpoint(SQLModel, table=True):
     status: str = Field(index=True)
     state: dict = Field(default_factory=dict, sa_column=Column(JSON))
     requires_action: bool = False
+    auto_repair_count: int = 0
+    fallback_topic_id: UUID | None = Field(default=None, foreign_key="gapcandidate.id")
+    next_action: str | None = None
     error: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=now_utc, index=True)
     updated_at: datetime = Field(default_factory=now_utc)

@@ -93,6 +93,10 @@ export type Project = {
   id: string;
   title: string;
   direction: string;
+  workflow_mode?: string;
+  target_track?: string;
+  topic_flexibility?: string;
+  human_checkpoints?: string;
   status: string;
   selected_gap_id?: string;
   created_at: string;
@@ -116,6 +120,16 @@ export type Gap = {
     level?: string;
     findings?: string[];
     details?: {
+      stage?: string;
+      satisfied_conditions?: string[];
+      pending_conditions?: string[];
+      blocker_type?: string | null;
+      target_track?: string;
+      estimated_resources?: {
+        memory_gb?: number;
+        gpu?: string;
+        model_budget_usd?: number;
+      };
       usable_dataset_count?: number;
       prepared_rows?: number;
       meaning?: string;

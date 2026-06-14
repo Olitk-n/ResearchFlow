@@ -336,6 +336,10 @@ def create_project(body: ProjectCreate, user: CurrentUser, session: SessionDep):
         user_id=user.id,
         title=body.title,
         direction=body.direction,
+        workflow_mode=body.workflow_mode,
+        target_track=body.target_track,
+        topic_flexibility=body.topic_flexibility,
+        human_checkpoints=body.human_checkpoints,
     )
     session.add(project)
     session.commit()

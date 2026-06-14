@@ -234,6 +234,8 @@ code { background: #f2f5f2; padding: 6px; border-radius: 5px; font-family: "IBM 
 .build-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .build-controls label { margin: 0; }
 .constraint-note { color: #9a3412; background: #fff4e8; border: 1px solid #fed7aa; padding: 9px; border-radius: 8px; font-size: 10px; }
+.constraint-note.readiness-progress { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+.constraint-note.readiness-pass { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
 .empty { min-height: 180px; display: grid; place-items: center; place-content: center; color: #9aa69f; text-align: center; border: 1px dashed #ced8d0; border-radius: 14px; grid-column: 1 / -1; }
 .empty p { font-size: 12px; }
 .welcome-empty { min-height: calc(100vh - 74px); display: grid; place-items: center; place-content: center; text-align: center; padding: 40px; }

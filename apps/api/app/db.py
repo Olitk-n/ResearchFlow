@@ -32,6 +32,22 @@ def create_db_and_tables() -> None:
                 text("ALTER TABLE modelconfig ADD COLUMN api_key_hint VARCHAR")
             )
     additive_columns = {
+        "researchproject": {
+            "workflow_mode": "VARCHAR NOT NULL DEFAULT 'submission_first'",
+            "target_track": "VARCHAR NOT NULL DEFAULT 'ei_or_sci_q4'",
+            "topic_flexibility": "VARCHAR NOT NULL DEFAULT 'adjacent_allowed'",
+            "human_checkpoints": "VARCHAR NOT NULL DEFAULT 'minimal'",
+            "compute_profile": (
+                "JSON NOT NULL DEFAULT "
+                "'{\"cpu_threads\":8,\"memory_gb\":10,\"gpu\":\"optional_rtx_3060_6gb\","
+                "\"cloud_spend_allowed\":false}'"
+            ),
+        },
+        "workflowcheckpoint": {
+            "auto_repair_count": "INTEGER NOT NULL DEFAULT 0",
+            "fallback_topic_id": "VARCHAR",
+            "next_action": "VARCHAR",
+        },
         "gapcandidate": {
             "submission_readiness": "JSON NOT NULL DEFAULT '{}'",
             "alternative_topics": "JSON NOT NULL DEFAULT '[]'",
@@ -61,7 +77,16 @@ def create_db_and_tables() -> None:
             existing = {column["name"] for column in inspector.get_columns(table)}
             for name, definition in columns.items():
                 if name not in existing:
-                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+                    )
+        connection.execute(
+            text(
+                "UPDATE researchproject SET workflow_mode='submission_first', "
+                "target_track='ei_or_sci_q4', topic_flexibility='adjacent_allowed', "
+                "human_checkpoints='minimal' WHERE workflow_mode IS NULL"
+            )
+        )
         if "spent_usd" not in model_columns:
             connection.execute(
                 text(

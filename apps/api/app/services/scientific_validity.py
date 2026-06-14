@@ -19,12 +19,15 @@ from ..models import (
 )
 
 SYNTHETIC_PATTERNS = (
-    r"random\.(uniform|gauss|normalvariate|random)",
+    r"random\.(uniform|gauss|normalvariate)\s*\(",
     r"simulate true",
     r"simulated? (label|target|truth|value)",
     r"synthetic (label|target|truth|value)",
 )
-MIN_SUBMISSION_ROWS = 200
+# Aggregated benchmark-result studies may have one row per model/benchmark run.
+# One hundred independent measured rows is the conservative local-first floor;
+# route-specific plans may require more.
+MIN_SUBMISSION_ROWS = 100
 REQUIRED_SUBMISSION_RESULT_FIELDS = (
     "primary_metric",
     "per_seed_metrics",
@@ -143,30 +146,59 @@ def assess_topic_submission_readiness(
         if item.license and int(item.metadata_json.get("relevance_score") or 0) >= 2
     ]
     findings: list[str] = []
+    pending: list[str] = []
+    blocker_type: str | None = None
     if not usable:
         findings.append("No clearly licensed, topic-matched dataset was found.")
+        blocker_type = "data_unavailable"
     if preparation is None:
-        findings.append("No dataset snapshot has been prepared and inspected.")
+        pending.extend([
+            "Download and inspect the selected dataset.",
+            "Confirm field mapping and measurable target.",
+            "Run baselines and statistical analysis.",
+        ])
     elif preparation.row_count < MIN_SUBMISSION_ROWS:
-        findings.append(
+        sample_finding = (
             f"Only {preparation.row_count} usable rows were prepared; "
-            f"the default submission track requires at least {MIN_SUBMISSION_ROWS}."
+            f"expand or justify the sample before submission (default: {MIN_SUBMISSION_ROWS})."
         )
+        findings.append(sample_finding)
+        pending.append(sample_finding)
     elif preparation.profile_json.get("complete_snapshot") is False:
-        findings.append(
+        pending.append(
             "The prepared data is only a capped snapshot; use the complete split "
             "or register a defensible sampling design."
         )
     if gap.feasibility_score < 0.65:
-        findings.append("The candidate feasibility score is below the submission planning threshold.")
-    passed = not findings
+        pending.append("Validate feasibility with a lightweight pilot experiment.")
+    passed = not findings and preparation is not None and not pending
+    if blocker_type:
+        level = "needs_external_resource"
+    elif preparation is None:
+        level = "validating"
+    elif pending:
+        level = "building_submission_evidence"
+    else:
+        level = "submission_candidate"
     alternatives = build_similar_feasible_topics(project.direction, gap, usable)
     return AuditResult(
         passed=passed,
         score=min(1.0, gap.feasibility_score * (1.0 if usable else 0.45)),
-        level="submission_plannable" if passed else "topic_revision_required",
+        level=level,
         findings=findings,
         details={
+            "stage": level,
+            "satisfied_conditions": (
+                ["A licensed, topic-matched dataset candidate is available."] if usable else []
+            ),
+            "pending_conditions": pending,
+            "blocker_type": blocker_type,
+            "target_track": getattr(project, "target_track", "ei_or_sci_q4"),
+            "estimated_resources": {
+                "memory_gb": 10,
+                "gpu": "optional RTX 3060 6 GB",
+                "model_budget_usd": 0.50,
+            },
             "usable_dataset_count": len(usable),
             "prepared_rows": preparation.row_count if preparation else 0,
             "alternatives": alternatives,
