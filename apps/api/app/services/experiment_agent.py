@@ -170,7 +170,14 @@ async def generate_experiment(
             "other files, subprocesses, shell commands, eval, or exec. Do not invent "
             "performance results. Derive metrics from actual rows. Never create random "
             "or simulated ground-truth labels. If the data lacks a valid target field, "
-            "produce a descriptive baseline and label it as such."
+            "produce a descriptive baseline and label it as such. For a real task, "
+            "results.json must contain: metrics, primary_metric{name,value,direction}, "
+            "per_seed_metrics with one record for each seed, baseline_metrics, "
+            "uncertainty with a 95% interval, effect_size{name,value}, "
+            "statistical_test{name,statistic,p_value}, seeds, num_samples, parameters, "
+            "and claims. Compute every value from the actual rows. If these analyses "
+            "cannot be implemented using the allowed environment, classify the plan "
+            "as descriptive rather than pretending it is submission-ready."
         ),
         prompt=(
             f"Project: {project.title}\nDirection: {project.direction}\n"
@@ -184,6 +191,32 @@ async def generate_experiment(
             "metrics": ["string"],
             "methodology": ["string"],
             "expected_outputs": ["results.json"],
+            "result_protocol": {
+                "metrics": {"metric_name": "aggregate numeric value"},
+                "primary_metric": {
+                    "name": "metric name",
+                    "value": "aggregate value",
+                    "direction": "higher_is_better or lower_is_better",
+                },
+                "per_seed_metrics": [
+                    {"seed": 42, "metrics": {"metric_name": "numeric value"}},
+                ],
+                "baseline_metrics": {
+                    "baseline name": {"metric_name": "numeric value"},
+                },
+                "uncertainty": {
+                    "method": "bootstrap or t interval",
+                    "confidence": 0.95,
+                    "lower": "numeric",
+                    "upper": "numeric",
+                },
+                "effect_size": {"name": "Cohen d or paired effect", "value": "numeric"},
+                "statistical_test": {
+                    "name": "test name",
+                    "statistic": "numeric",
+                    "p_value": "numeric",
+                },
+            },
             "code": "complete Python source",
             "scientific_plan": {
                 "field_mapping": {"input": "source field names", "target": "source field name or null"},

@@ -113,6 +113,12 @@ export type Gap = {
       usable_dataset_count?: number;
       prepared_rows?: number;
       meaning?: string;
+      recommended_targets?: Array<{
+        track: string;
+        fit: string;
+        requirements: string[];
+        warning: string;
+      }>;
     };
   };
   alternative_topics: Array<{

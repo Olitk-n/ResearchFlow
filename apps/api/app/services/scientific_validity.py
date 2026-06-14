@@ -25,6 +25,14 @@ SYNTHETIC_PATTERNS = (
     r"synthetic (label|target|truth|value)",
 )
 MIN_SUBMISSION_ROWS = 200
+REQUIRED_SUBMISSION_RESULT_FIELDS = (
+    "primary_metric",
+    "per_seed_metrics",
+    "baseline_metrics",
+    "uncertainty",
+    "effect_size",
+    "statistical_test",
+)
 
 
 @dataclass(slots=True)
@@ -161,6 +169,12 @@ def assess_topic_submission_readiness(
             "usable_dataset_count": len(usable),
             "prepared_rows": preparation.row_count if preparation else 0,
             "alternatives": alternatives,
+            "recommended_targets": recommend_submission_targets(
+                gap,
+                preparation.row_count if preparation else 0,
+                baseline_count=0,
+                real_task=False,
+            ),
             "meaning": (
                 "This is a planning assessment, not a guarantee of acceptance or publication."
             ),
@@ -191,6 +205,59 @@ def build_similar_feasible_topics(
             "minimum_experiment": "预注册扰动、真实标签、基线对照、多种子和分层误差分析。",
         },
     ]
+
+
+def recommend_submission_targets(
+    gap: GapCandidate,
+    prepared_rows: int,
+    baseline_count: int,
+    real_task: bool,
+) -> list[dict[str, Any]]:
+    targets = []
+    if real_task and prepared_rows >= MIN_SUBMISSION_ROWS and baseline_count >= 1:
+        targets.append({
+            "track": "EI conference / applied computing conference",
+            "fit": "reasonable",
+            "requirements": [
+                "clear engineering contribution",
+                "at least one credible baseline",
+                "independent test results with uncertainty",
+                "reproducible code and data statement",
+            ],
+            "warning": "Indexing and acceptance depend on the exact venue and year; verify before submission.",
+        })
+    if (
+        real_task
+        and prepared_rows >= 500
+        and baseline_count >= 2
+        and gap.novelty_score >= 0.65
+    ):
+        targets.append({
+            "track": "SCI Q3/Q4 applied AI journal",
+            "fit": "possible after expert review",
+            "requirements": [
+                "multiple competitive baselines",
+                "ablation or sensitivity analysis",
+                "statistical significance and effect size",
+                "strong domain interpretation and limitations",
+            ],
+            "warning": (
+                "A quartile is category- and year-dependent; the system does not "
+                "guarantee indexing or acceptance."
+            ),
+        })
+    if not targets:
+        targets.append({
+            "track": "workshop / preprint / pilot study",
+            "fit": "current evidence level",
+            "requirements": [
+                "increase task sample size",
+                "add competitive baselines",
+                "complete multi-seed uncertainty analysis",
+            ],
+            "warning": "Current evidence is not sufficient for a default SCI/EI recommendation.",
+        })
+    return targets
 
 
 def audit_experiment_code(code: str, scientific_plan: dict[str, Any]) -> AuditResult:
@@ -259,6 +326,55 @@ def audit_completed_run(spec: ExperimentSpec, results: dict[str, Any]) -> AuditR
     baseline_metrics = payload.get("baseline_metrics")
     if plan.get("baselines") and not isinstance(baseline_metrics, dict):
         findings.append("Run did not emit baseline metrics.")
+    primary_metric = payload.get("primary_metric")
+    if plan.get("evidence_class") == "real_task":
+        missing_protocol = [
+            field for field in REQUIRED_SUBMISSION_RESULT_FIELDS
+            if not payload.get(field)
+        ]
+        if missing_protocol:
+            findings.append(
+                "Submission result protocol is incomplete: "
+                + ", ".join(missing_protocol)
+                + "."
+            )
+        if isinstance(primary_metric, dict):
+            if not {"name", "value", "direction"} <= set(primary_metric):
+                findings.append(
+                    "Primary metric must include name, value, and direction."
+                )
+        else:
+            findings.append("Primary metric must be a structured object.")
+        statistical_test = payload.get("statistical_test")
+        if isinstance(statistical_test, dict):
+            if not {"name", "p_value"} <= set(statistical_test):
+                findings.append(
+                    "Statistical test must include name and p_value."
+                )
+            else:
+                p_value = statistical_test.get("p_value")
+                if (
+                    not isinstance(p_value, (int, float))
+                    or isinstance(p_value, bool)
+                    or not 0 <= p_value <= 1
+                ):
+                    findings.append("Statistical-test p_value must be between 0 and 1.")
+        effect_size = payload.get("effect_size")
+        if isinstance(effect_size, dict) and not {"name", "value"} <= set(effect_size):
+            findings.append("Effect size must include name and value.")
+        if isinstance(uncertainty, dict):
+            lower = uncertainty.get("lower")
+            upper = uncertainty.get("upper")
+            confidence = uncertainty.get("confidence")
+            if not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in (lower, upper, confidence)
+            ):
+                findings.append(
+                    "Uncertainty must include numeric lower, upper, and confidence."
+                )
+            elif lower > upper or not 0 < confidence < 1:
+                findings.append("Uncertainty interval or confidence level is invalid.")
     synthetic = bool((spec.validity_audit or {}).get("details", {}).get("synthetic"))
     level = "synthetic_demonstration" if synthetic else "initial_experiment"
     passed = not findings
@@ -273,6 +389,10 @@ def audit_completed_run(spec: ExperimentSpec, results: dict[str, Any]) -> AuditR
             "observed_sample_count": observed_rows,
             "observed_seeds": result_seeds,
             "synthetic": synthetic,
+            "submission_protocol_fields": {
+                field: bool(payload.get(field))
+                for field in REQUIRED_SUBMISSION_RESULT_FIELDS
+            },
         },
     )
 

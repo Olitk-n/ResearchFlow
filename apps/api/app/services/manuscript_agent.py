@@ -20,6 +20,35 @@ class ManuscriptDraft:
     mode: str
 
 
+def format_verified_results(experiment_results: dict[str, Any]) -> str:
+    primary = experiment_results.get("primary_metric") or {}
+    uncertainty = experiment_results.get("uncertainty") or {}
+    effect = experiment_results.get("effect_size") or {}
+    test = experiment_results.get("statistical_test") or {}
+    baselines = experiment_results.get("baseline_metrics") or {}
+    seeds = experiment_results.get("seeds") or []
+    samples = experiment_results.get(
+        "num_samples", experiment_results.get("sample_rows"),
+    )
+    if not primary:
+        return (
+            "The completed run did not satisfy the structured submission-result "
+            "protocol, so no publication-level performance claim is reported."
+        )
+    return (
+        f"The primary metric was {primary.get('name')}="
+        f"{primary.get('value')} ({primary.get('direction')}) over {samples} samples "
+        f"and seeds {seeds}. The {uncertainty.get('confidence', 0.95):.0%} "
+        f"interval was [{uncertainty.get('lower')}, {uncertainty.get('upper')}] "
+        f"using {uncertainty.get('method')}. Baseline results were "
+        f"{json.dumps(baselines, ensure_ascii=False, sort_keys=True)}. "
+        f"The reported effect size was {effect.get('name')}={effect.get('value')}; "
+        f"{test.get('name')} yielded statistic={test.get('statistic')} and "
+        f"p={test.get('p_value')}. These values are copied from the immutable "
+        "sandbox result artifact and require domain-expert interpretation."
+    )
+
+
 def fallback_manuscript(
     project: ResearchProject,
     gap: GapCandidate,
@@ -37,11 +66,7 @@ def fallback_manuscript(
     if experiment_results:
         results = (
             ("This is a synthetic demonstration, not a domain experiment. " if synthetic else "")
-            +
-            "The completed sandbox run produced the following immutable result "
-            f"record: {json.dumps(experiment_results, ensure_ascii=False, sort_keys=True)}. "
-            "These values are descriptive until a domain-specific statistical analysis "
-            "and independent replication are completed."
+            + format_verified_results(experiment_results)
         )
     else:
         results = (
@@ -131,7 +156,11 @@ async def generate_manuscript(
             "provided citation keys such as [paper1]. If results are absent, explicitly "
             "state that the section is a plan without empirical claims. If the experiment "
             "is synthetic, repeatedly and explicitly call it a synthetic demonstration and "
-            "do not make domain-performance claims."
+            "do not make domain-performance claims. In submission mode, report the "
+            "primary metric, confidence interval, baselines, effect size, statistical "
+            "test, sample count, and seeds exactly as supplied. Do not dump raw JSON "
+            "into prose and do not describe statistical significance unless the supplied "
+            "p-value and test support that wording."
         ),
         prompt=(
             f"Target: {target}; mode: {mode}\nProject: {project.title}\n"

@@ -590,6 +590,94 @@ def test_submission_gate_accepts_complete_real_task_plan():
     assert gate.level == "submission_candidate"
 
 
+def test_real_task_run_requires_complete_submission_result_protocol():
+    spec = ExperimentSpec(
+        project_id=uuid4(),
+        gap_id=uuid4(),
+        name="real task",
+        objective="compare methods",
+        scientific_plan={
+            "evidence_class": "real_task",
+            "expected_sample_count": 300,
+            "seeds": [42, 43, 44],
+            "baselines": ["majority"],
+            "statistical_analysis": "paired test and 95% interval",
+        },
+    )
+    audit = audit_completed_run(
+        spec,
+        {
+            "num_samples": 300,
+            "seeds": [42, 43, 44],
+            "metrics": {"accuracy": 0.8},
+            "per_seed_metrics": [
+                {"seed": 42, "metrics": {"accuracy": 0.79}},
+                {"seed": 43, "metrics": {"accuracy": 0.8}},
+                {"seed": 44, "metrics": {"accuracy": 0.81}},
+            ],
+            "baseline_metrics": {"majority": {"accuracy": 0.55}},
+            "uncertainty": {
+                "method": "bootstrap",
+                "confidence": 0.95,
+                "lower": 0.78,
+                "upper": 0.82,
+            },
+        },
+    )
+    assert not audit.passed
+    assert "effect_size" in " ".join(audit.findings)
+    assert "statistical_test" in " ".join(audit.findings)
+
+
+def test_real_task_run_accepts_structured_statistics():
+    spec = ExperimentSpec(
+        project_id=uuid4(),
+        gap_id=uuid4(),
+        name="real task",
+        objective="compare methods",
+        scientific_plan={
+            "evidence_class": "real_task",
+            "expected_sample_count": 300,
+            "seeds": [42, 43, 44],
+            "baselines": ["majority"],
+            "statistical_analysis": "paired test and 95% interval",
+        },
+    )
+    audit = audit_completed_run(
+        spec,
+        {
+            "num_samples": 300,
+            "seeds": [42, 43, 44],
+            "metrics": {"accuracy": 0.8},
+            "primary_metric": {
+                "name": "accuracy",
+                "value": 0.8,
+                "direction": "higher_is_better",
+            },
+            "per_seed_metrics": [
+                {"seed": 42, "metrics": {"accuracy": 0.79}},
+                {"seed": 43, "metrics": {"accuracy": 0.8}},
+                {"seed": 44, "metrics": {"accuracy": 0.81}},
+            ],
+            "baseline_metrics": {"majority": {"accuracy": 0.55}},
+            "uncertainty": {
+                "method": "bootstrap",
+                "confidence": 0.95,
+                "lower": 0.78,
+                "upper": 0.82,
+            },
+            "effect_size": {"name": "cohen_d", "value": 1.2},
+            "statistical_test": {
+                "name": "paired_t",
+                "statistic": 5.1,
+                "p_value": 0.01,
+            },
+        },
+    )
+    assert audit.passed
+    assert audit.level == "reproducible_research"
+
+
 def test_reproducibility_bundle_copies_code_data_card_lock_logs_and_results(tmp_path):
     experiment = tmp_path / "experiment"
     manuscript = tmp_path / "manuscript"

@@ -367,6 +367,13 @@ function GapCard({
               ))}
             </details>
           )}
+          {gap.submission_readiness.details?.recommended_targets?.map((target) => (
+            <details key={target.track}>
+              <summary>目标建议：{target.track}（{target.fit}）</summary>
+              <ul>{target.requirements.map((item) => <li key={item}>{item}</li>)}</ul>
+              <small>{target.warning}</small>
+            </details>
+          ))}
         </div>
       )}
       <details><summary>风险与反向验证</summary>

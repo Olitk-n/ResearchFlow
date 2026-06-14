@@ -52,6 +52,7 @@ from .scientific_validity import (
     assess_topic_submission_readiness,
     audit_dataset_fit,
     audit_experiment_code,
+    recommend_submission_targets,
 )
 
 
@@ -986,6 +987,15 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
                 )
             persist_model_usage(session, project.id, model_config)
             code_audit = audit_experiment_code(experiment.code, experiment.scientific_plan)
+            readiness.details["recommended_targets"] = recommend_submission_targets(
+                gap,
+                preparation.row_count,
+                len(experiment.scientific_plan.get("baselines") or []),
+                experiment.scientific_plan.get("evidence_class") == "real_task",
+            )
+            gap.submission_readiness = readiness.as_dict()
+            session.add(gap)
+            session.commit()
             if not dataset_audit.passed:
                 code_audit.passed = False
                 code_audit.findings.append(
