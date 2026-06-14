@@ -46,7 +46,11 @@ from app.services.artifacts import build_manuscript
 from app.services.data_prep import prepare_dataset
 from app.services.embeddings import index_papers, semantic_search
 from app.services.executors import execute_experiment
-from app.services.experiment_agent import fallback_experiment, validate_generated_code
+from app.services.experiment_agent import (
+    baseline_path_diagnostics,
+    fallback_experiment,
+    validate_generated_code,
+)
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
 from app.services.open_access import safe_public_https_url
 from app.services.scientific_validity import (
@@ -630,6 +634,29 @@ def test_builtin_ranking_baseline_emits_submission_protocol(tmp_path):
     assert result["primary_metric"]["name"] == "hit_at_1"
     assert result["baseline_metrics"]["random_candidate"]["hit_at_1"] <= 1.0
     assert len(result["per_seed_metrics"]) == 3
+
+
+def test_baseline_path_diagnostics_explain_available_submission_routes():
+    preparation = DataPreparation(
+        project_id=uuid4(),
+        dataset_id=uuid4(),
+        status="completed",
+        row_count=240,
+        schema_json={
+            "query": {"types": {"str": 240}, "examples": ["weather tool"]},
+            "candidate_answer": {"types": {"str": 240}, "examples": ["call weather tool"]},
+            "is_relevant": {"types": {"bool": 240}, "examples": [True, False]},
+            "label": {"types": {"str": 240}, "examples": ["success", "failure"]},
+            "feature": {"types": {"float": 240}, "examples": [1.0, 2.0]},
+            "score": {"types": {"float": 240}, "examples": [0.1, 0.8]},
+        },
+    )
+    paths = baseline_path_diagnostics(preparation)
+    by_name = {item["path"]: item for item in paths}
+    assert by_name["ranking_retrieval"]["passed"]
+    assert by_name["classification"]["passed"]
+    assert by_name["regression"]["passed"]
+    assert by_name["ranking_retrieval"]["evidence"]["query_fields"] == ["query"]
 
 
 def test_unrelated_dataset_requires_human_confirmation():

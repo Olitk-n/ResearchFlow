@@ -172,9 +172,20 @@ export type Dataset = {
     passed?: boolean;
     level?: string;
     findings?: string[];
-    details?: Record<string, unknown>;
+    details?: {
+      baseline_paths?: BaselinePath[];
+      [key: string]: unknown;
+    };
   };
   human_confirmed: boolean;
+};
+
+export type BaselinePath = {
+  path: string;
+  label: string;
+  passed: boolean;
+  required: string;
+  evidence: Record<string, unknown>;
 };
 
 export type DataPreparation = {

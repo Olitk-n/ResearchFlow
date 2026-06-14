@@ -859,6 +859,11 @@ function DatasetView({
                   {dataset.validity_audit.findings?.map((finding) => (
                     <div key={finding}>• {finding}</div>
                   ))}
+                  {dataset.validity_audit.details?.baseline_paths?.map((path) => (
+                    <div key={path.path}>
+                      {path.passed ? "✓" : "×"} {path.label}：{path.required}
+                    </div>
+                  ))}
                 </div>
               )}
               {dataset.validity_audit?.passed === false && !dataset.human_confirmed && (
@@ -906,6 +911,14 @@ function ExperimentView({
 }) {
   const latestRun = runs[0];
   const codeOrigin = String(experiment?.resource_profile.code_origin || "unknown");
+  const baselinePaths = Array.isArray(experiment?.resource_profile.baseline_paths)
+    ? experiment?.resource_profile.baseline_paths as Array<{
+      path: string;
+      label: string;
+      passed: boolean;
+      required: string;
+    }>
+    : [];
   const terminalOutput = experiment
     ? [
         "$ docker run --network none --cpus 2 --memory 4g",
@@ -943,6 +956,16 @@ function ExperimentView({
                 <span>代码来源 <b>{codeOrigin === "llm" ? "大模型生成并通过 AST 审查" : "可审计离线回退"}</b></span>
                 <span>网络权限 <b>关闭</b></span>
                 <span>最近运行 <b>{latestRun?.status || "尚未执行"}</b></span>
+              </div>
+            )}
+            {baselinePaths.length > 0 && (
+              <div className="constraint-note">
+                <b>可投稿实验路径</b>
+                {baselinePaths.map((path) => (
+                  <div key={path.path}>
+                    {path.passed ? "✓" : "×"} {path.label}：{path.required}
+                  </div>
+                ))}
               </div>
             )}
           </div>

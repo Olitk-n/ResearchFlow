@@ -38,7 +38,7 @@ from ..security import decrypt_secret
 from .artifacts import build_experiment_package
 from .data_prep import choose_dataset, prepare_dataset
 from .embeddings import index_papers
-from .experiment_agent import generate_experiment
+from .experiment_agent import baseline_path_diagnostics, generate_experiment
 from .gaps import (
     GapDraft,
     build_coverage_matrix,
@@ -869,7 +869,12 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
             session.commit()
             session.refresh(preparation)
             dataset_audit = audit_dataset_fit(project, gap, selected_dataset, preparation)
-            selected_dataset.validity_audit = dataset_audit.as_dict()
+            audit_payload = dataset_audit.as_dict()
+            audit_payload["details"] = {
+                **audit_payload.get("details", {}),
+                "baseline_paths": baseline_path_diagnostics(preparation),
+            }
+            selected_dataset.validity_audit = audit_payload
             readiness = assess_topic_submission_readiness(
                 project, gap, assets, preparation,
             )
@@ -1020,6 +1025,7 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
                     "methodology": experiment.methodology,
                     "expected_outputs": experiment.expected_outputs,
                     "code_origin": experiment.code_origin,
+                    "baseline_paths": baseline_path_diagnostics(preparation),
                     "dataset_preparation_id": str(preparation.id),
                     "dataset_id": str(selected_dataset.id),
                 },

@@ -44,6 +44,57 @@ class ExperimentDraft:
     scientific_plan: dict
 
 
+def baseline_path_diagnostics(preparation: DataPreparation) -> list[dict]:
+    rows_ok = preparation.row_count >= 200
+    ranking_query = text_fields_matching(
+        preparation, ("query", "prompt", "question", "task", "instruction"),
+    )
+    ranking_candidate = text_fields_matching(
+        preparation, ("candidate", "answer", "response", "document", "tool", "choice"),
+    )
+    ranking_target = fields_matching(
+        preparation, ("correct", "relevance", "relevant", "label", "target", "gold"),
+    )
+    class_targets = classification_candidates(preparation)
+    class_features = feature_candidates(preparation, class_targets[-1]) if class_targets else []
+    numeric = numeric_fields(preparation)
+    return [
+        {
+            "path": "ranking_retrieval",
+            "label": "排序/检索/候选选择",
+            "passed": bool(rows_ok and ranking_query and ranking_candidate and ranking_target),
+            "required": "至少200行，query/prompt字段，candidate/answer字段，correct/relevance字段",
+            "evidence": {
+                "query_fields": ranking_query,
+                "candidate_fields": ranking_candidate,
+                "target_fields": ranking_target,
+                "rows": preparation.row_count,
+            },
+        },
+        {
+            "path": "classification",
+            "label": "分类/标签预测",
+            "passed": bool(rows_ok and class_targets and class_features),
+            "required": "至少200行，低基数标签字段，至少一个文本或数值输入字段",
+            "evidence": {
+                "target_fields": class_targets,
+                "feature_fields": class_features,
+                "rows": preparation.row_count,
+            },
+        },
+        {
+            "path": "regression",
+            "label": "数值回归",
+            "passed": bool(rows_ok and len(numeric) >= 2),
+            "required": "至少200行，至少两个数值字段，其中一个作为目标变量",
+            "evidence": {
+                "numeric_fields": numeric,
+                "rows": preparation.row_count,
+            },
+        },
+    ]
+
+
 def numeric_fields(preparation: DataPreparation) -> list[str]:
     fields = []
     for name, descriptor in preparation.schema_json.items():
