@@ -859,21 +859,33 @@ async def manuscript(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    pre_submission_review = json.loads(
+        (root / "pre-submission-review.json").read_text(encoding="utf-8")
+    )
+    base_validity_audit = gate_audit.as_dict() if gate_audit else (
+        completed_run.validity_audit if completed_run else {}
+    )
+    validity_audit = {
+        **base_validity_audit,
+        "pre_submission_review": pre_submission_review,
+    }
+    review_passed = body.mode != "submission" or pre_submission_review["passed"]
+    build_quality_level = (
+        gate_audit.level
+        if gate_audit
+        else (completed_run.quality_level if completed_run else "concept_draft")
+    )
+    if body.mode == "submission" and not review_passed:
+        build_quality_level = "reproducible_research"
     build = ManuscriptBuild(
         project_id=project.id,
         target=body.target,
-        status=RunStatus.COMPLETED if compiled else RunStatus.BLOCKED,
+        status=RunStatus.COMPLETED if compiled and review_passed else RunStatus.BLOCKED,
         artifact_path=str(root),
         citation_keys=citation_keys,
         mode=body.mode,
-        quality_level=(
-            gate_audit.level
-            if gate_audit
-            else (completed_run.quality_level if completed_run else "concept_draft")
-        ),
-        validity_audit=gate_audit.as_dict() if gate_audit else (
-            completed_run.validity_audit if completed_run else {}
-        ),
+        quality_level=build_quality_level,
+        validity_audit=validity_audit,
     )
     session.add(build)
     session.commit()

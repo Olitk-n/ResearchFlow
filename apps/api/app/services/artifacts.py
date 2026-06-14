@@ -710,10 +710,6 @@ def build_manuscript(
         if claim["source"]["type"] == "unresolved"
         and claim["section"] in {"abstract", "introduction", "related_work", "results"}
     ]
-    if draft.mode == "submission" and unresolved:
-        raise ValueError(
-            f"submission manuscript contains {len(unresolved)} unresolved scientific claims"
-        )
     (root / "claim-provenance.json").write_text(
         json.dumps(
             {
@@ -764,6 +760,21 @@ def build_manuscript(
         ),
         encoding="utf-8",
     )
+    pre_submission_review = build_pre_submission_review(
+        draft=draft,
+        target=target,
+        quality_level=quality_level,
+        citation_keys=citation_keys,
+        unresolved_claims=unresolved,
+        experiment_results=experiment_results,
+        experiment_root=experiment_root,
+        publication_name=publication_name,
+        author_guide_url=author_guide_url,
+    )
+    (root / "pre-submission-review.json").write_text(
+        json.dumps(pre_submission_review, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (root / "cover-letter.txt").write_text(
         (
             f"Dear Editor or Program Committee,\n\n"
@@ -793,3 +804,154 @@ def build_manuscript(
             compiled = True
     write_artifact_index(root)
     return root, compiled, citation_keys
+
+
+def build_pre_submission_review(
+    *,
+    draft: ManuscriptDraft,
+    target: str,
+    quality_level: str,
+    citation_keys: list[str],
+    unresolved_claims: list[dict[str, Any]],
+    experiment_results: dict[str, Any] | None,
+    experiment_root: Path | None,
+    publication_name: str | None,
+    author_guide_url: str | None,
+) -> dict[str, Any]:
+    findings: list[dict[str, str]] = []
+
+    def add(severity: str, category: str, message: str, action: str) -> None:
+        findings.append(
+            {
+                "severity": severity,
+                "category": category,
+                "message": message,
+                "action": action,
+            }
+        )
+
+    submission_mode = draft.mode == "submission"
+    results = experiment_results or {}
+    required_result_fields = (
+        "primary_metric",
+        "per_seed_metrics",
+        "baseline_metrics",
+        "uncertainty",
+        "effect_size",
+        "statistical_test",
+        "ablation_results",
+    )
+    missing_result_fields = [field for field in required_result_fields if not results.get(field)]
+    baseline_count = len(results.get("baseline_metrics") or {})
+    ablation_count = len(results.get("ablation_results") or {})
+
+    if submission_mode and quality_level != "submission_candidate":
+        add(
+            "critical",
+            "quality",
+            "The scientific validity gate did not classify this project as a submission candidate.",
+            "Complete the missing experiment requirements before generating a submission manuscript.",
+        )
+    if unresolved_claims:
+        add(
+            "critical",
+            "provenance",
+            f"{len(unresolved_claims)} scientific claims are not linked to evidence.",
+            "Bind every scientific claim to a paper passage or a verified experiment field.",
+        )
+    if submission_mode and missing_result_fields:
+        add(
+            "critical",
+            "experiment",
+            "Verified result fields are missing: " + ", ".join(missing_result_fields) + ".",
+            "Rerun the experiment with baselines, multiple seeds, uncertainty, tests, and ablations.",
+        )
+    if len(citation_keys) < 3:
+        add(
+            "critical" if submission_mode else "major",
+            "literature",
+            f"Only {len(citation_keys)} verified references are available.",
+            "Expand and verify the evidence library before making novelty or comparison claims.",
+        )
+    if submission_mode and experiment_root is None:
+        add(
+            "critical",
+            "reproducibility",
+            "No completed reproducibility bundle is attached.",
+            "Attach code, dependency lock, data fingerprint, commands, logs, and result files.",
+        )
+    if submission_mode and baseline_count < 1:
+        add(
+            "critical",
+            "comparison",
+            "No valid baseline result is available.",
+            "Run at least one accepted baseline under the same data split and metric definition.",
+        )
+    if submission_mode and ablation_count < 2:
+        add(
+            "major",
+            "analysis",
+            f"Only {ablation_count} ablation or sensitivity results are available.",
+            "Add at least two ablations or sensitivity analyses that test the central method choices.",
+        )
+    if len(draft.abstract.strip()) < 100:
+        add(
+            "major",
+            "writing",
+            "The abstract is too short to state the problem, method, evidence, result, and limitation.",
+            "Rewrite the abstract around verified results without adding unsupported claims.",
+        )
+    if len(draft.limitations.strip()) < 120:
+        add(
+            "major",
+            "limitations",
+            "The limitations section is too brief for a submission candidate.",
+            "Discuss dataset scope, external validity, statistical power, compute limits, and failure cases.",
+        )
+    if target in {"elsevier_journal", "springer_journal", "ieee_conference"}:
+        if not publication_name:
+            add(
+                "critical",
+                "venue",
+                "A specific publication has not been selected.",
+                "Select the exact journal or conference instead of relying on a generic publisher template.",
+            )
+        if not author_guide_url:
+            add(
+                "critical",
+                "venue",
+                "The official author guide is missing.",
+                "Record the official author instructions and verify formatting, length, and disclosure rules.",
+            )
+
+    counts = {
+        severity: sum(1 for finding in findings if finding["severity"] == severity)
+        for severity in ("critical", "major", "minor")
+    }
+    passed = counts["critical"] == 0 and counts["major"] == 0
+    recommendation = (
+        "submission_candidate"
+        if passed
+        else "blocked"
+        if counts["critical"]
+        else "major_revision"
+    )
+    return {
+        "passed": passed,
+        "recommendation": recommendation,
+        "summary": counts,
+        "findings": findings,
+        "human_actions": [
+            "Confirm authors, affiliations, contributions, conflicts of interest, funding, and ethics statements.",
+            "Verify the current indexing status, quartile or conference ranking, scope, deadlines, and fees.",
+            "Read the full manuscript and inspect every numerical claim before submission.",
+        ],
+        "evidence": {
+            "citation_count": len(citation_keys),
+            "unresolved_claim_count": len(unresolved_claims),
+            "baseline_count": baseline_count,
+            "ablation_count": ablation_count,
+            "missing_result_fields": missing_result_fields,
+            "reproducibility_bundle_attached": experiment_root is not None,
+        },
+    }

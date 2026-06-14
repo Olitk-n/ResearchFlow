@@ -1401,6 +1401,16 @@ def test_submission_package_contains_human_completion_checklist(tmp_path, monkey
         for item in checklist["items"]
     )
     assert (root / "cover-letter.txt").exists()
+    review = json.loads(
+        (root / "pre-submission-review.json").read_text(encoding="utf-8"),
+    )
+    assert review["passed"] is False
+    assert review["recommendation"] == "blocked"
+    assert review["summary"]["critical"] > 0
+    assert any(
+        finding["category"] == "provenance"
+        for finding in review["findings"]
+    )
     assert "Example Applied AI Journal" in (
         root / "main.tex"
     ).read_text(encoding="utf-8")

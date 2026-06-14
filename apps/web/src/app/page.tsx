@@ -1018,7 +1018,21 @@ function ManuscriptView({
     status: string;
     mode: string;
     quality_level: string;
-    validity_audit: { passed?: boolean; findings?: string[] };
+    validity_audit: {
+      passed?: boolean;
+      findings?: string[];
+      pre_submission_review?: {
+        passed: boolean;
+        recommendation: string;
+        summary: { critical: number; major: number; minor: number };
+        findings: Array<{
+          severity: string;
+          category: string;
+          message: string;
+          action: string;
+        }>;
+      };
+    };
   }>;
   hasCompletedRun: boolean;
   busy: boolean;
@@ -1063,6 +1077,23 @@ function ManuscriptView({
           {latest && (
             <div className="constraint-note">
               证据等级：{QUALITY_LABELS[latest.quality_level] || latest.quality_level}
+              {latest.validity_audit?.pre_submission_review && (
+                <>
+                  <div>
+                    投稿前预审：
+                    {latest.validity_audit.pre_submission_review.passed
+                      ? "通过"
+                      : latest.validity_audit.pre_submission_review.recommendation === "major_revision"
+                        ? "需要重大修改"
+                        : "已阻止投稿候选"}
+                  </div>
+                  {latest.validity_audit.pre_submission_review.findings.map((finding, index) => (
+                    <div key={`${finding.category}-${index}`}>
+                      [{finding.severity}] {finding.message} 修改建议：{finding.action}
+                    </div>
+                  ))}
+                </>
+              )}
               {latest.validity_audit?.findings?.map((finding) => (
                 <div key={finding}>• {finding}</div>
               ))}

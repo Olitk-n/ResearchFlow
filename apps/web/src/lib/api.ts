@@ -273,6 +273,17 @@ export type ProjectDetail = {
     validity_audit: {
       passed?: boolean;
       findings?: string[];
+      pre_submission_review?: {
+        passed: boolean;
+        recommendation: string;
+        summary: { critical: number; major: number; minor: number };
+        findings: Array<{
+          severity: string;
+          category: string;
+          message: string;
+          action: string;
+        }>;
+      };
     };
   }>;
   workflow_checkpoints: Array<{
