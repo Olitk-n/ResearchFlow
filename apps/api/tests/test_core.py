@@ -42,7 +42,7 @@ from app.providers.literature import (
 )
 from app.providers.llm import LLMConfig, ModelBudgetExceeded, complete_json
 from app.security import decrypt_secret, encrypt_secret, hash_password
-from app.services.artifacts import build_manuscript
+from app.services.artifacts import build_manuscript, build_results_tables
 from app.services.data_prep import prepare_dataset
 from app.services.embeddings import index_papers, semantic_search
 from app.services.executors import execute_experiment
@@ -1008,6 +1008,35 @@ def test_reproducibility_bundle_copies_code_data_card_lock_logs_and_results(tmp_
     assert (manuscript / "reproducibility/run.py").exists()
     assert (manuscript / "reproducibility/data/data-card.json").exists()
     assert (manuscript / "reproducibility/runtime/results.json").exists()
+
+
+def test_verified_results_tables_are_generated_without_model_rewriting():
+    table = build_results_tables({
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 0.81234,
+            "direction": "higher_is_better",
+        },
+        "baseline_metrics": {"majority": {"accuracy": 0.55}},
+        "uncertainty": {
+            "method": "bootstrap",
+            "confidence": 0.95,
+            "lower": 0.78,
+            "upper": 0.84,
+        },
+        "ablation_results": [
+            {
+                "name": "without_tool_feature",
+                "metric": "accuracy",
+                "value": 0.73,
+                "interpretation": "Feature sensitivity.",
+            }
+        ],
+    })
+    assert "accuracy & 0.8123 & higher\\_is\\_better" in table
+    assert "majority: accuracy & 0.5500 & baseline" in table
+    assert "without\\_tool\\_feature & accuracy & 0.7300" in table
+    assert "0.7800--0.8400" in table
 
 
 def test_cloud_executor_is_disabled_without_billable_action(tmp_path):

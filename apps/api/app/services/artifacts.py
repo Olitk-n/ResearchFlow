@@ -46,6 +46,7 @@ ARXIV_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -82,6 +83,7 @@ ICLR_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -127,6 +129,7 @@ ICML_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -163,6 +166,7 @@ NEURIPS_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -198,6 +202,7 @@ IEEE_CONFERENCE_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -233,6 +238,7 @@ ELSEVIER_JOURNAL_TEMPLATE = r"""
 {{ method }}
 \section{Results}
 {{ results }}
+\input{results-tables.tex}
 \section{Limitations}
 {{ limitations }}
 \section{Conclusion}
@@ -331,6 +337,82 @@ def latex_escape(text: str, citation_keys: list[str]) -> str:
     for marker, citation in placeholders.items():
         escaped = escaped.replace(marker, citation)
     return escaped
+
+
+def latex_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def build_results_tables(experiment_results: dict | None) -> str:
+    if not experiment_results:
+        return "% No completed experiment results were available.\n"
+    primary = experiment_results.get("primary_metric") or {}
+    uncertainty = experiment_results.get("uncertainty") or {}
+    baselines = experiment_results.get("baseline_metrics") or {}
+    rows = [
+        (
+            str(primary.get("name") or "primary metric"),
+            latex_value(primary.get("value", "n/a")),
+            str(primary.get("direction") or "n/a"),
+        )
+    ]
+    for baseline_name, values in baselines.items():
+        if isinstance(values, dict):
+            for metric, value in values.items():
+                rows.append((f"{baseline_name}: {metric}", latex_value(value), "baseline"))
+    table_rows = "\n".join(
+        f"{latex_escape(name, [])} & {latex_escape(value, [])} & "
+        f"{latex_escape(direction, [])} \\\\"
+        for name, value, direction in rows
+    )
+    interval = (
+        f"{latex_value(uncertainty.get('lower', 'n/a'))}--"
+        f"{latex_value(uncertainty.get('upper', 'n/a'))}"
+    )
+    ablations = experiment_results.get("ablation_results") or []
+    ablation_rows = "\n".join(
+        f"{latex_escape(str(item.get('name', 'condition')), [])} & "
+        f"{latex_escape(str(item.get('metric', 'metric')), [])} & "
+        f"{latex_escape(latex_value(item.get('value', 'n/a')), [])} \\\\"
+        for item in ablations
+        if isinstance(item, dict)
+    )
+    if not ablation_rows:
+        ablation_rows = "No verified ablation & n/a & n/a \\\\"
+    return (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        "\\caption{Verified primary and baseline results. Values are copied from the "
+        "sandbox result artifact.}\n"
+        "\\label{tab:verified-results}\n"
+        "\\begin{tabular}{lll}\n"
+        "\\toprule\n"
+        "Method or metric & Value & Role/direction \\\\\n"
+        "\\midrule\n"
+        f"{table_rows}\n"
+        "\\midrule\n"
+        f"95\\% interval & {latex_escape(interval, [])} & "
+        f"{latex_escape(str(uncertainty.get('method', 'n/a')), [])} \\\\\n"
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table}\n\n"
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        "\\caption{Verified ablation and sensitivity results.}\n"
+        "\\label{tab:verified-ablations}\n"
+        "\\begin{tabular}{lll}\n"
+        "\\toprule\n"
+        "Condition & Metric & Value \\\\\n"
+        "\\midrule\n"
+        f"{ablation_rows}\n"
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table}\n"
+    )
 
 
 def project_directory(project_id) -> Path:
@@ -581,6 +663,10 @@ def build_manuscript(
         ),
     )
     (root / "main.tex").write_text(tex.strip() + "\n", encoding="utf-8")
+    (root / "results-tables.tex").write_text(
+        build_results_tables(experiment_results),
+        encoding="utf-8",
+    )
     (root / "references.bib").write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8")
     (root / "README.txt").write_text(
         "Compile with: pdflatex main.tex; bibtex main; pdflatex main.tex; pdflatex main.tex\n"
