@@ -143,7 +143,8 @@ async def aggregate_datasets(query: str, limit: int = 5) -> tuple[list[DatasetRe
     results: list[DatasetResult] = []
     for source, response in zip(jobs, responses, strict=True):
         if isinstance(response, Exception):
-            detail = str(response).splitlines()[0][:160] or type(response).__name__
+            lines = str(response).splitlines()
+            detail = (lines[0][:160] if lines else "") or type(response).__name__
             errors.append(f"{source}: {detail}")
         else:
             results.extend(response)

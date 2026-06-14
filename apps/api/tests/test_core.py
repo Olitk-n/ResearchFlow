@@ -33,6 +33,7 @@ from app.models import (
     WorkflowControl,
 )
 from app.providers.datasets import DatasetResult, dataset_relevance_score
+from app.providers.datasets import aggregate_datasets
 from app.providers.literature import (
     NormalizedPaper,
     _crossref_open_pdf,
@@ -123,6 +124,26 @@ def test_failed_submission_proposes_actionable_similar_topics():
     assert all(item["suggested_track"] for item in alternatives)
     assert "example/agent-traces" in alternatives[0]["why_feasible"]
     assert "EI" in alternatives[0]["suggested_track"]
+
+
+async def test_dataset_aggregation_survives_empty_exception_message(monkeypatch):
+    async def fail_without_message(*_args, **_kwargs):
+        raise RuntimeError()
+
+    monkeypatch.setattr(
+        "app.providers.datasets.search_huggingface",
+        fail_without_message,
+    )
+    monkeypatch.setattr(
+        "app.providers.datasets.search_openml",
+        fail_without_message,
+    )
+
+    datasets, errors = await aggregate_datasets("AI for materials", limit=2)
+
+    assert datasets == []
+    assert len(errors) == 4
+    assert all(error.endswith("RuntimeError") for error in errors)
 
 
 def test_submission_review_rejects_short_sparsely_cited_manuscript(tmp_path):
