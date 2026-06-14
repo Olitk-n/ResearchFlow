@@ -929,6 +929,7 @@ def test_real_task_run_requires_complete_submission_result_protocol():
     assert not audit.passed
     assert "effect_size" in " ".join(audit.findings)
     assert "statistical_test" in " ".join(audit.findings)
+    assert "ablation_results" in " ".join(audit.findings)
 
 
 def test_real_task_run_accepts_structured_statistics():
@@ -974,6 +975,14 @@ def test_real_task_run_accepts_structured_statistics():
                 "statistic": 5.1,
                 "p_value": 0.01,
             },
+            "ablation_results": [
+                {
+                    "name": "seed_42_sensitivity",
+                    "metric": "accuracy",
+                    "value": 0.79,
+                    "interpretation": "Performance under one preregistered split seed.",
+                }
+            ],
         },
     )
     assert audit.passed

@@ -26,6 +26,7 @@ def format_verified_results(experiment_results: dict[str, Any]) -> str:
     effect = experiment_results.get("effect_size") or {}
     test = experiment_results.get("statistical_test") or {}
     baselines = experiment_results.get("baseline_metrics") or {}
+    ablations = experiment_results.get("ablation_results") or []
     seeds = experiment_results.get("seeds") or []
     samples = experiment_results.get(
         "num_samples", experiment_results.get("sample_rows"),
@@ -44,7 +45,9 @@ def format_verified_results(experiment_results: dict[str, Any]) -> str:
         f"{json.dumps(baselines, ensure_ascii=False, sort_keys=True)}. "
         f"The reported effect size was {effect.get('name')}={effect.get('value')}; "
         f"{test.get('name')} yielded statistic={test.get('statistic')} and "
-        f"p={test.get('p_value')}. These values are copied from the immutable "
+        f"p={test.get('p_value')}. Ablation and sensitivity results were "
+        f"{json.dumps(ablations, ensure_ascii=False, sort_keys=True)}. "
+        "These values are copied from the immutable "
         "sandbox result artifact and require domain-expert interpretation."
     )
 

@@ -358,6 +358,15 @@ result = {{
         "statistic": statistic,
         "p_value": p_value,
     }},
+    "ablation_results": [
+        {{
+            "name": "seed_" + str(item["seed"]) + "_ranking_sensitivity",
+            "metric": "hit_at_1",
+            "value": item["metrics"]["hit_at_1"],
+            "interpretation": "Sensitivity of retrieval performance to the fixed data split seed.",
+        }}
+        for item in per_seed_metrics
+    ],
     "claims": [
         "This run uses measured relevance labels from the prepared dataset.",
         "The baseline is a seeded random candidate ranking.",
@@ -608,6 +617,15 @@ result = {{
         "statistic": statistic,
         "p_value": p_value,
     }},
+    "ablation_results": [
+        {{
+            "name": "seed_" + str(item["seed"]) + "_classification_sensitivity",
+            "metric": "accuracy",
+            "value": item["metrics"]["accuracy"],
+            "interpretation": "Sensitivity of classification performance to the fixed data split seed.",
+        }}
+        for item in per_seed_metrics
+    ],
     "claims": [
         "This run uses a measured label field from the prepared dataset.",
         "The baseline is the train-split majority class.",
@@ -829,6 +847,15 @@ result = {{
         "statistic": statistic,
         "p_value": p_value,
     }},
+    "ablation_results": [
+        {{
+            "name": "seed_" + str(item["seed"]) + "_regression_sensitivity",
+            "metric": "mae",
+            "value": item["metrics"]["mae"],
+            "interpretation": "Sensitivity of regression error to the fixed data split seed.",
+        }}
+        for item in per_seed_metrics
+    ],
     "claims": [
         "This run uses a measured target field from the prepared dataset.",
         "The baseline is the train-split target mean.",
@@ -1016,7 +1043,8 @@ async def generate_experiment(
             "per_seed_metrics with one record for each seed, baseline_metrics, "
             "uncertainty with a 95% interval, effect_size{name,value}, "
             "statistical_test{name,statistic,p_value}, seeds, num_samples, parameters, "
-            "and claims. Compute every value from the actual rows. If these analyses "
+            "ablation_results[{name,metric,value,interpretation}], and claims. "
+            "Compute every value from the actual rows. If these analyses "
             "cannot be implemented using the allowed environment, classify the plan "
             "as descriptive rather than pretending it is submission-ready."
         ),
@@ -1057,6 +1085,14 @@ async def generate_experiment(
                     "statistic": "numeric",
                     "p_value": "numeric",
                 },
+                "ablation_results": [
+                    {
+                        "name": "ablation or sensitivity condition",
+                        "metric": "metric name",
+                        "value": "numeric value",
+                        "interpretation": "bounded evidence-based interpretation",
+                    },
+                ],
             },
             "code": "complete Python source",
             "scientific_plan": {

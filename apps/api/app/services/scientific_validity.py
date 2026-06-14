@@ -32,6 +32,7 @@ REQUIRED_SUBMISSION_RESULT_FIELDS = (
     "uncertainty",
     "effect_size",
     "statistical_test",
+    "ablation_results",
 )
 
 
@@ -362,6 +363,17 @@ def audit_completed_run(spec: ExperimentSpec, results: dict[str, Any]) -> AuditR
         effect_size = payload.get("effect_size")
         if isinstance(effect_size, dict) and not {"name", "value"} <= set(effect_size):
             findings.append("Effect size must include name and value.")
+        ablations = payload.get("ablation_results")
+        if not isinstance(ablations, list) or not ablations:
+            findings.append("At least one structured ablation or sensitivity result is required.")
+        elif any(
+            not isinstance(item, dict)
+            or not {"name", "metric", "value", "interpretation"} <= set(item)
+            for item in ablations
+        ):
+            findings.append(
+                "Each ablation must include name, metric, value, and interpretation."
+            )
         if isinstance(uncertainty, dict):
             lower = uncertainty.get("lower")
             upper = uncertainty.get("upper")
