@@ -213,6 +213,67 @@ def test_auth_and_project_api():
         assert readiness.json()["acceptance_ready"] is False
 
 
+def test_adopt_alternative_topic_creates_selectable_gap(monkeypatch):
+    create_db_and_tables()
+    scheduled = []
+
+    def fake_schedule(coroutine):
+        scheduled.append(coroutine)
+        coroutine.close()
+
+    monkeypatch.setattr("app.main.schedule", fake_schedule)
+    email = f"alternative-{uuid4()}@local.dev"
+    with TestClient(app) as client:
+        token = client.post(
+            "/auth/register",
+            json={"email": email, "password": "researchflow"},
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/projects",
+            headers=headers,
+            json={"title": "Agent evaluation", "direction": "LLM agent evaluation"},
+        )
+        project_id = UUID(created.json()["id"])
+        with Session(engine) as session:
+            project = session.get(ResearchProject, project_id)
+            assert project
+            source = GapCandidate(
+                project_id=project.id,
+                title="Weak original topic",
+                hypothesis="Original topic lacks usable data.",
+                rationale="test",
+                confidence=0.7,
+                novelty_score=0.7,
+                feasibility_score=0.4,
+                estimated_cost="low",
+                alternative_topics=[
+                    {
+                        "title": "LLM agent evaluation with reproducible retrieval baselines",
+                        "why_feasible": "Uses licensed ranking datasets and a simple baseline.",
+                        "minimum_experiment": "3 seeds, random baseline, hit@1 and MRR.",
+                    }
+                ],
+            )
+            session.add(source)
+            session.commit()
+            session.refresh(source)
+            source_id = source.id
+        response = client.post(
+            f"/projects/{project_id}/adopt-alternative-topic",
+            headers=headers,
+            json={"source_gap_id": str(source_id), "alternative_index": 0},
+        )
+        assert response.status_code == 202
+        new_gap_id = UUID(response.json()["gap_id"])
+        with Session(engine) as session:
+            adopted = session.get(GapCandidate, new_gap_id)
+            assert adopted
+            assert "reproducible retrieval baselines" in adopted.title
+            assert adopted.feasibility_score >= 0.82
+        assert scheduled
+
+
 def test_model_api_never_returns_plaintext_or_ciphertext():
     create_db_and_tables()
     email = f"model-{uuid4()}@local.dev"

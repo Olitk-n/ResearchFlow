@@ -316,12 +316,14 @@ function GapCard({
   validation,
   selected,
   onSelect,
+  onAdoptAlternative,
   busy,
 }: {
   gap: Gap;
   validation?: GapValidation;
   selected: boolean;
   onSelect: () => void;
+  onAdoptAlternative: (index: number) => void;
   busy: boolean;
 }) {
   return (
@@ -358,11 +360,18 @@ function GapCard({
           {!gap.submission_readiness.passed && gap.alternative_topics?.length > 0 && (
             <details>
               <summary>查看相似可行选题</summary>
-              {gap.alternative_topics.map((topic) => (
+              {gap.alternative_topics.map((topic, index) => (
                 <div className="alternative-topic" key={topic.title}>
                   <strong>{topic.title}</strong>
                   <p>{topic.why_feasible}</p>
                   <small>最低实验要求：{topic.minimum_experiment}</small>
+                  <button
+                    className="secondary wide"
+                    disabled={busy}
+                    onClick={() => onAdoptAlternative(index)}
+                  >
+                    采用这个相似选题
+                  </button>
                 </div>
               ))}
             </details>
@@ -555,6 +564,21 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
       method: "POST",
       body: JSON.stringify({ gap_id: gap.id }),
     }, token));
+  }
+
+  async function adoptAlternativeTopic(gap: Gap, alternativeIndex: number) {
+    if (!selected) return;
+    await action(`alternative-${gap.id}-${alternativeIndex}`, () => api(
+      `/projects/${selected.id}/adopt-alternative-topic`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          source_gap_id: gap.id,
+          alternative_index: alternativeIndex,
+        }),
+      },
+      token,
+    ));
   }
 
   async function generateManuscript(
@@ -780,7 +804,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                   ))}
                 </div>
               )}
-              <div className="gap-grid">{detail?.gaps.map((gap) => <GapCard key={gap.id} gap={gap} validation={detail.gap_validations.find((item) => item.gap_id === gap.id)} selected={gap.id === selected.selected_gap_id} onSelect={() => chooseGap(gap)} busy={busy === `gap-${gap.id}`} />)}{!detail?.gaps.length && <Empty icon={Target} text="先启动论文检索，系统将生成候选课题。" />}</div>
+              <div className="gap-grid">{detail?.gaps.map((gap) => <GapCard key={gap.id} gap={gap} validation={detail.gap_validations.find((item) => item.gap_id === gap.id)} selected={gap.id === selected.selected_gap_id} onSelect={() => chooseGap(gap)} onAdoptAlternative={(index) => adoptAlternativeTopic(gap, index)} busy={busy === `gap-${gap.id}` || busy.startsWith(`alternative-${gap.id}-`)} />)}{!detail?.gaps.length && <Empty icon={Target} text="先启动论文检索，系统将生成候选课题。" />}</div>
             </div>}
             {view === "data" && (
               <DatasetView

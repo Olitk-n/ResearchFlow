@@ -35,6 +35,11 @@ class GapSelection(BaseModel):
     gap_id: UUID
 
 
+class AlternativeTopicSelection(BaseModel):
+    source_gap_id: UUID
+    alternative_index: int = Field(ge=0, le=10)
+
+
 class ManuscriptRequest(BaseModel):
     target: Literal[
         "arxiv",

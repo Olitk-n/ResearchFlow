@@ -49,6 +49,7 @@ from .models import (
 )
 from .providers.llm import PROVIDER_PRESETS, LLMConfig, probe_model
 from .schemas import (
+    AlternativeTopicSelection,
     AuthRequest,
     AuthResponse,
     DatasetValidityConfirmation,
@@ -500,6 +501,67 @@ async def select_gap(
     else:
         schedule(plan_selected_gap(project.id, gap.id))
     return {"message": "已选择课题，正在寻找数据集并生成实验"}
+
+
+@app.post("/projects/{project_id}/adopt-alternative-topic", status_code=202)
+async def adopt_alternative_topic(
+    project_id: UUID,
+    body: AlternativeTopicSelection,
+    user: CurrentUser,
+    session: SessionDep,
+):
+    project = own_project(session, user, project_id)
+    source = session.get(GapCandidate, body.source_gap_id)
+    if not source or source.project_id != project.id:
+        raise HTTPException(status_code=404, detail="原候选课题不存在")
+    alternatives = source.alternative_topics or []
+    if body.alternative_index >= len(alternatives):
+        raise HTTPException(status_code=404, detail="相似选题不存在")
+    alternative = alternatives[body.alternative_index]
+    title = str(alternative.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="相似选题缺少标题")
+    gap = GapCandidate(
+        project_id=project.id,
+        title=title[:240],
+        hypothesis=str(
+            alternative.get("why_feasible")
+            or source.hypothesis
+        )[:2000],
+        rationale=(
+            "This candidate was adopted from a ResearchFlow alternative topic. "
+            f"Minimum experiment: {alternative.get('minimum_experiment', 'not specified')}. "
+            f"Source candidate: {source.title}."
+        ),
+        confidence=max(0.45, min(source.confidence, 0.72)),
+        novelty_score=max(0.45, source.novelty_score - 0.05),
+        feasibility_score=max(source.feasibility_score, 0.82),
+        estimated_cost=source.estimated_cost,
+        risks=[
+            *source.risks[:4],
+            "Adopted alternative still requires fresh dataset fit and reverse-search review.",
+        ],
+        evidence_ids=source.evidence_ids,
+        counter_queries=[
+            f'"{title}" dataset benchmark',
+            f'"{title}" reproducible baseline',
+        ],
+        submission_readiness={},
+        alternative_topics=[],
+    )
+    session.add(gap)
+    session.commit()
+    session.refresh(gap)
+    if settings.task_mode == "celery":
+        from .worker import plan_selected_gap_task
+
+        plan_selected_gap_task.delay(str(project.id), str(gap.id))
+    else:
+        schedule(plan_selected_gap(project.id, gap.id))
+    return {
+        "message": "已采用相似选题，正在重新寻找数据集并生成实验",
+        "gap_id": str(gap.id),
+    }
 
 
 @app.post("/projects/{project_id}/papers/upload")
