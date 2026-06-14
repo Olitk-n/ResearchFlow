@@ -1484,6 +1484,12 @@ def test_submission_package_contains_human_completion_checklist(tmp_path, monkey
         quality_level="submission_candidate",
         publication_name="Example Applied AI Journal",
         author_guide_url="https://example.test/author-guide",
+        venue_profile={
+            "claim": "sci_q4",
+            "evidence_url": "https://example.test/indexing",
+            "verified_on": "2026-06-14",
+            "human_verified": True,
+        },
     )
     checklist = json.loads(
         (root / "submission-checklist.json").read_text(encoding="utf-8"),
@@ -1509,6 +1515,60 @@ def test_submission_package_contains_human_completion_checklist(tmp_path, monkey
     assert "Example Applied AI Journal" in (
         root / "main.tex"
     ).read_text(encoding="utf-8")
+    target_profile = json.loads(
+        (root / "target-profile.json").read_text(encoding="utf-8"),
+    )
+    assert target_profile["venue_profile"]["claim"] == "sci_q4"
+    assert target_profile["venue_profile"]["human_verified"] is True
+
+
+def test_publisher_submission_review_requires_verified_venue_profile(tmp_path):
+    draft = ManuscriptDraft(
+        title="Evidence-grounded study",
+        abstract=" ".join(["abstract"] * 150),
+        introduction=" ".join(["introduction [paper1] [paper2] [paper3]"] * 100),
+        related_work=" ".join(["related [paper1] [paper2] [paper3]"] * 90),
+        method=" ".join(["method"] * 500),
+        results=(
+            "accuracy 0.80 over 500 samples; confidence interval [0.78, 0.82]. "
+            "Baseline comparison, effect size Cohen d, p=0.03 statistical test, "
+            "and ablation sensitivity analysis are reported. "
+            + " ".join(["result"] * 350)
+        ),
+        limitations=" ".join(["limitation"] * 200),
+        conclusion=" ".join(["conclusion"] * 150),
+        mode="submission",
+    )
+    results = {
+        "primary_metric": {"name": "accuracy", "value": 0.8},
+        "per_seed_metrics": [0.79, 0.8, 0.81],
+        "baseline_metrics": {"a": 0.7, "b": 0.72},
+        "uncertainty": {"lower": 0.78, "upper": 0.82},
+        "effect_size": {"name": "cohen_d", "value": 0.4},
+        "statistical_test": {"name": "t_test", "p_value": 0.03},
+        "ablation_results": [{"name": "a"}, {"name": "b"}],
+        "num_samples": 500,
+    }
+    review = build_pre_submission_review(
+        draft=draft,
+        target="elsevier_journal",
+        quality_level="submission_candidate",
+        citation_keys=["paper1", "paper2", "paper3"],
+        unresolved_claims=[],
+        experiment_results=results,
+        experiment_root=tmp_path,
+        publication_name="Example Journal",
+        author_guide_url="https://example.test/guide",
+        venue_profile={},
+    )
+
+    assert review["passed"] is False
+    assert review["recommendation"] == "blocked"
+    assert any(
+        finding["category"] == "venue"
+        and "verified by a human" in finding["message"]
+        for finding in review["findings"]
+    )
 
 
 async def test_prepared_dataset_hash_matches_exact_file_bytes(monkeypatch):

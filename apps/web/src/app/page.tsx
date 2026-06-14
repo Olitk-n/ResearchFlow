@@ -587,6 +587,10 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     mode: "draft" | "submission",
     publicationName?: string,
     authorGuideUrl?: string,
+    venueEvidenceUrl?: string,
+    venueClaim?: string,
+    venueVerifiedOn?: string,
+    venueHumanVerified?: boolean,
   ) {
     if (!selected) return;
     await action("manuscript", () => api(`/projects/${selected.id}/manuscript`, {
@@ -596,6 +600,10 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         mode,
         publication_name: publicationName || null,
         author_guide_url: authorGuideUrl || null,
+        venue_evidence_url: venueEvidenceUrl || null,
+        venue_claim: venueClaim || null,
+        venue_verified_on: venueVerifiedOn || null,
+        venue_human_verified: Boolean(venueHumanVerified),
       }),
     }, token));
   }
@@ -1042,6 +1050,10 @@ function ManuscriptView({
     mode: "draft" | "submission",
     publicationName?: string,
     authorGuideUrl?: string,
+    venueEvidenceUrl?: string,
+    venueClaim?: string,
+    venueVerifiedOn?: string,
+    venueHumanVerified?: boolean,
   ) => void;
   onDownload: () => void;
 }) {
@@ -1049,6 +1061,10 @@ function ManuscriptView({
   const [mode, setMode] = useState<"draft" | "submission">("draft");
   const [publicationName, setPublicationName] = useState("");
   const [authorGuideUrl, setAuthorGuideUrl] = useState("");
+  const [venueEvidenceUrl, setVenueEvidenceUrl] = useState("");
+  const [venueClaim, setVenueClaim] = useState("");
+  const [venueVerifiedOn, setVenueVerifiedOn] = useState("");
+  const [venueHumanVerified, setVenueHumanVerified] = useState(false);
   const requiresPublication = ["ieee_conference", "elsevier_journal"].includes(target);
   const latest = builds.at(-1);
   return (
@@ -1135,6 +1151,37 @@ function ManuscriptView({
                   placeholder="https://..."
                 />
               </label>
+              <label>索引或分区证据网址
+                <input
+                  value={venueEvidenceUrl}
+                  onChange={(event) => setVenueEvidenceUrl(event.target.value)}
+                  placeholder="https://..."
+                />
+              </label>
+              <label>核验类别
+                <select value={venueClaim} onChange={(event) => setVenueClaim(event.target.value)}>
+                  <option value="">请选择</option>
+                  <option value="sci_q3">SCI 三区</option>
+                  <option value="sci_q4">SCI 四区</option>
+                  <option value="ei_conference">EI 会议</option>
+                  <option value="other">其他</option>
+                </select>
+              </label>
+              <label>核验日期
+                <input
+                  type="date"
+                  value={venueVerifiedOn}
+                  onChange={(event) => setVenueVerifiedOn(event.target.value)}
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={venueHumanVerified}
+                  onChange={(event) => setVenueHumanVerified(event.target.checked)}
+                />
+                我已人工核对当前年份、数据库与学科分类
+              </label>
             </div>
           )}
           {requiresPublication && mode === "submission" && (!publicationName || !authorGuideUrl) && (
@@ -1150,8 +1197,28 @@ function ManuscriptView({
           </ul>
           <button
             className="primary wide"
-            onClick={() => onGenerate(target, mode, publicationName, authorGuideUrl)}
-            disabled={busy || (requiresPublication && mode === "submission" && (!publicationName || !authorGuideUrl))}
+            onClick={() => onGenerate(
+              target,
+              mode,
+              publicationName,
+              authorGuideUrl,
+              venueEvidenceUrl,
+              venueClaim,
+              venueVerifiedOn,
+              venueHumanVerified,
+            )}
+            disabled={busy || (
+              requiresPublication
+              && mode === "submission"
+              && (
+                !publicationName
+                || !authorGuideUrl
+                || !venueEvidenceUrl
+                || !venueClaim
+                || !venueVerifiedOn
+                || !venueHumanVerified
+              )
+            )}
           >
             {busy ? <LoaderCircle className="spin" /> : <Sparkles />}
             生成 {target.toUpperCase()} {mode === "draft" ? "草稿" : "投稿稿"}

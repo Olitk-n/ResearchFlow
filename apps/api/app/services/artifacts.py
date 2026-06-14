@@ -619,6 +619,7 @@ def build_manuscript(
     quality_level: str = "concept_draft",
     publication_name: str | None = None,
     author_guide_url: str | None = None,
+    venue_profile: dict[str, Any] | None = None,
 ) -> tuple[Path, bool, list[str]]:
     root = project_directory(project.id) / "manuscript" / target
     root.mkdir(parents=True, exist_ok=True)
@@ -684,6 +685,7 @@ def build_manuscript(
                 "quality_level": quality_level,
                 "publication_name": publication_name,
                 "author_guide_url": author_guide_url,
+                "venue_profile": venue_profile or {},
             },
             indent=2,
         ),
@@ -770,6 +772,7 @@ def build_manuscript(
         experiment_root=experiment_root,
         publication_name=publication_name,
         author_guide_url=author_guide_url,
+        venue_profile=venue_profile,
     )
     (root / "pre-submission-review.json").write_text(
         json.dumps(pre_submission_review, ensure_ascii=False, indent=2),
@@ -817,6 +820,7 @@ def build_pre_submission_review(
     experiment_root: Path | None,
     publication_name: str | None,
     author_guide_url: str | None,
+    venue_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     findings: list[dict[str, str]] = []
 
@@ -831,6 +835,7 @@ def build_pre_submission_review(
         )
 
     submission_mode = draft.mode == "submission"
+    venue_profile = venue_profile or {}
     results = experiment_results or {}
     required_result_fields = (
         "primary_metric",
@@ -1001,6 +1006,20 @@ def build_pre_submission_review(
                 "The official author guide is missing.",
                 "Record the official author instructions and verify formatting, length, and disclosure rules.",
             )
+        if not venue_profile.get("human_verified"):
+            add(
+                "critical",
+                "venue",
+                "The publication indexing or quartile claim has not been verified by a human.",
+                "Verify the current source, year, database, and subject category before claiming SCI/EI readiness.",
+            )
+        if not venue_profile.get("evidence_url"):
+            add(
+                "critical",
+                "venue",
+                "No indexing or quartile evidence URL is recorded.",
+                "Record an official or authoritative source that supports the current SCI/EI claim.",
+            )
 
     counts = {
         severity: sum(1 for finding in findings if finding["severity"] == severity)
@@ -1038,5 +1057,6 @@ def build_pre_submission_review(
             "manuscript_word_count": manuscript_word_count,
             "section_word_counts": section_word_counts,
             "reproducibility_bundle_attached": experiment_root is not None,
+            "venue_profile": venue_profile,
         },
     }

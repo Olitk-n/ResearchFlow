@@ -821,6 +821,24 @@ async def manuscript(
                     status_code=409,
                     detail="Author guide URL must use HTTPS.",
                 )
+            if (
+                not body.venue_human_verified
+                or not body.venue_evidence_url
+                or not body.venue_evidence_url.startswith("https://")
+                or not body.venue_claim
+                or not body.venue_verified_on
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Submission target verification is incomplete.",
+                        "findings": [
+                            "Record an HTTPS indexing or quartile evidence URL.",
+                            "Select the claimed SCI/EI category and verification date.",
+                            "Confirm that a human checked the current source and subject category.",
+                        ],
+                    },
+                )
     experiment_results = completed_run.results if completed_run else None
     model_config = default_model_config(session, project.user_id)
     try:
@@ -877,6 +895,17 @@ async def manuscript(
             ),
             publication_name=body.publication_name,
             author_guide_url=body.author_guide_url,
+            venue_profile={
+                "publication_name": body.publication_name,
+                "claim": body.venue_claim,
+                "evidence_url": body.venue_evidence_url,
+                "verified_on": body.venue_verified_on,
+                "human_verified": body.venue_human_verified,
+                "warning": (
+                    "Quartile and indexing status are time-, database-, and category-dependent; "
+                    "this record is a human attestation, not an acceptance guarantee."
+                ),
+            },
         )
     except TemplateUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

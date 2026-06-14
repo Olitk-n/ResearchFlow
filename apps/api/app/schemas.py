@@ -52,6 +52,10 @@ class ManuscriptRequest(BaseModel):
     mode: Literal["draft", "submission"] = "draft"
     publication_name: str | None = Field(default=None, max_length=300)
     author_guide_url: str | None = Field(default=None, max_length=1000)
+    venue_evidence_url: str | None = Field(default=None, max_length=1000)
+    venue_claim: Literal["sci_q3", "sci_q4", "ei_conference", "other"] | None = None
+    venue_verified_on: str | None = Field(default=None, max_length=10)
+    venue_human_verified: bool = False
 
 
 class ExperimentRunRequest(BaseModel):
