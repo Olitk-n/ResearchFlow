@@ -364,6 +364,7 @@ function GapCard({
                 <div className="alternative-topic" key={topic.title}>
                   <strong>{topic.title}</strong>
                   <p>{topic.why_feasible}</p>
+                  {topic.suggested_track && <small>建议目标：{topic.suggested_track}</small>}
                   <small>最低实验要求：{topic.minimum_experiment}</small>
                   <button
                     className="secondary wide"

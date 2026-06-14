@@ -59,7 +59,13 @@ export async function api<T>(
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new ApiError(response.status, data.detail || "请求失败");
+    const detail = data.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : detail?.message
+        ? `${detail.message}${detail.findings?.length ? `：${detail.findings.join("；")}` : ""}`
+        : "请求失败";
+    throw new ApiError(response.status, message);
   }
   return response.json();
 }
@@ -125,6 +131,8 @@ export type Gap = {
     title: string;
     why_feasible: string;
     minimum_experiment: string;
+    suggested_track?: string;
+    addresses?: string[];
   }>;
 };
 

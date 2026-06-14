@@ -58,6 +58,7 @@ from app.services.scientific_validity import (
     audit_completed_run,
     audit_dataset_fit,
     audit_experiment_code,
+    build_similar_feasible_topics,
     copy_reproducibility_bundle,
     submission_gate,
 )
@@ -74,6 +75,49 @@ def test_secret_encryption_roundtrip():
     encrypted = encrypt_secret("sk-local-secret")
     assert encrypted != "sk-local-secret"
     assert decrypt_secret(encrypted) == "sk-local-secret"
+
+
+def test_failed_submission_proposes_actionable_similar_topics():
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Agent evaluation",
+        direction="LLM agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Unrunnable agent benchmark",
+        hypothesis="A new evaluator improves reliability.",
+        rationale="test",
+        confidence=0.7,
+        novelty_score=0.7,
+        feasibility_score=0.4,
+        estimated_cost="high",
+    )
+    dataset = DatasetAsset(
+        project_id=project.id,
+        source="huggingface",
+        external_id="example/agent-traces",
+        name="example/agent-traces",
+        license="apache-2.0",
+        metadata_json={"relevance_score": 3},
+    )
+    blockers = [
+        "No valid baseline result is available.",
+        "Only one random seed was completed.",
+    ]
+
+    alternatives = build_similar_feasible_topics(
+        project.direction,
+        gap,
+        [dataset],
+        blockers,
+    )
+
+    assert len(alternatives) == 3
+    assert all(item["addresses"] == blockers for item in alternatives)
+    assert all(item["suggested_track"] for item in alternatives)
+    assert "example/agent-traces" in alternatives[0]["why_feasible"]
+    assert "EI" in alternatives[0]["suggested_track"]
 
 
 def test_model_key_hint_is_separate_from_ciphertext():

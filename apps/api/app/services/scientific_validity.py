@@ -187,23 +187,37 @@ def build_similar_feasible_topics(
     direction: str,
     gap: GapCandidate,
     usable_datasets: list[DatasetAsset],
+    blockers: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     dataset_name = usable_datasets[0].name if usable_datasets else "a licensed public benchmark"
+    blocker_text = "；".join(blockers or []) or "当前选题缺少足够的投稿级实验条件"
     return [
         {
-            "title": f"{direction} 的可复现基线与失败模式复核",
-            "why_feasible": f"可围绕 {dataset_name} 复现公开基线，并报告多种子误差与失败类型。",
-            "minimum_experiment": "至少一个公开基线、3个随机种子、独立测试集和95%置信区间。",
+            "title": f"{direction}的可复现基线与失败模式复核",
+            "why_feasible": (
+                f"当前阻碍是：{blocker_text}。可围绕 {dataset_name} 复现公开基线，"
+                "把贡献收缩为可靠复核、误差分析和可复现性证据。"
+            ),
+            "minimum_experiment": "至少2个可信基线、3个随机种子、独立测试集、95%置信区间和分层失败分析。",
+            "suggested_track": "EI应用型会议；证据充分后可评估SCI四区应用期刊",
+            "addresses": blockers or [],
         },
         {
-            "title": f"{direction} 在预算约束下的性能、成本与延迟权衡",
-            "why_feasible": "无需声称发明全新模型，可形成可审计的多目标实证研究。",
-            "minimum_experiment": "至少3种方法或配置，统一预算，报告性能、成本、延迟和显著性。",
+            "title": f"{direction}在预算约束下的性能、成本与延迟权衡",
+            "why_feasible": "无需声称发明全新模型，真实运行日志可直接支持多目标实证结论。",
+            "minimum_experiment": "至少3种方法或配置，在统一预算下报告性能、成本、延迟、显著性和效应量。",
+            "suggested_track": "EI工程会议或SCI三区/四区应用计算期刊",
+            "addresses": blockers or [],
         },
         {
-            "title": f"{direction} 的数据质量敏感性与稳健性分析",
-            "why_feasible": f"可使用 {dataset_name} 的真实字段构造缺失、噪声或分布切片，不生成虚假真值。",
-            "minimum_experiment": "预注册扰动、真实标签、基线对照、多种子和分层误差分析。",
+            "title": f"{direction}的数据质量敏感性与稳健性分析",
+            "why_feasible": (
+                f"可使用 {dataset_name} 的真实字段构造缺失、噪声或分布切片，"
+                "不生成虚假真值，并通过预注册扰动验证稳健性。"
+            ),
+            "minimum_experiment": "真实标签、至少3档预注册扰动、2个基线、多种子和分层误差分析。",
+            "suggested_track": "EI数据工程会议或SCI四区实证研究期刊",
+            "addresses": blockers or [],
         },
     ]
 

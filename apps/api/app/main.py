@@ -76,6 +76,7 @@ from .services.manuscript_agent import generate_manuscript
 from .services.scientific_validity import (
     audit_completed_run,
     backfill_scientific_validity,
+    build_similar_feasible_topics,
     submission_gate,
 )
 from .services.venue_templates import TemplateUnavailable
@@ -770,12 +771,34 @@ async def manuscript(
             len(papers),
         )
         if not gate_audit.passed:
+            datasets = session.exec(
+                select(DatasetAsset).where(DatasetAsset.project_id == project.id)
+            ).all()
+            gap.alternative_topics = build_similar_feasible_topics(
+                project.direction,
+                gap,
+                datasets,
+                gate_audit.findings,
+            )
+            gap.submission_readiness = {
+                **(gap.submission_readiness or {}),
+                "passed": False,
+                "level": "submission_blocked",
+                "findings": gate_audit.findings,
+                "details": {
+                    **((gap.submission_readiness or {}).get("details") or {}),
+                    "alternatives": gap.alternative_topics,
+                },
+            }
+            session.add(gap)
+            session.commit()
             raise HTTPException(
                 status_code=409,
                 detail={
                     "message": "Submission manuscript is blocked by scientific validity gates.",
                     "quality_level": gate_audit.level,
                     "findings": gate_audit.findings,
+                    "alternative_topics": gap.alternative_topics,
                 },
             )
         if body.target in {"ieee_conference", "elsevier_journal"}:
@@ -877,6 +900,29 @@ async def manuscript(
     )
     if body.mode == "submission" and not review_passed:
         build_quality_level = "reproducible_research"
+        review_findings = [
+            item["message"] for item in pre_submission_review["findings"]
+        ]
+        datasets = session.exec(
+            select(DatasetAsset).where(DatasetAsset.project_id == project.id)
+        ).all()
+        gap.alternative_topics = build_similar_feasible_topics(
+            project.direction,
+            gap,
+            datasets,
+            review_findings,
+        )
+        gap.submission_readiness = {
+            **(gap.submission_readiness or {}),
+            "passed": False,
+            "level": "submission_review_failed",
+            "findings": review_findings,
+            "details": {
+                **((gap.submission_readiness or {}).get("details") or {}),
+                "alternatives": gap.alternative_topics,
+            },
+        }
+        session.add(gap)
     build = ManuscriptBuild(
         project_id=project.id,
         target=body.target,
