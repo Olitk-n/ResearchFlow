@@ -559,6 +559,79 @@ def test_builtin_classification_baseline_emits_submission_protocol(tmp_path):
     assert len(result["per_seed_metrics"]) == 3
 
 
+def test_builtin_ranking_baseline_emits_submission_protocol(tmp_path):
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Ranking baseline",
+        direction="agent retrieval evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Measured relevance ranking",
+        hypothesis="Overlap ranking gives a reproducible retrieval baseline.",
+        rationale="test",
+        confidence=0.8,
+        novelty_score=0.7,
+        feasibility_score=0.8,
+        estimated_cost="low",
+    )
+    preparation = DataPreparation(
+        project_id=project.id,
+        dataset_id=uuid4(),
+        status="completed",
+        row_count=240,
+        schema_json={
+            "query": {"types": {"str": 240}, "examples": ["weather tool"]},
+            "candidate_answer": {"types": {"str": 240}, "examples": ["call weather tool"]},
+            "is_relevant": {"types": {"bool": 240}, "examples": [True, False]},
+        },
+    )
+    draft = fallback_experiment(project, gap, preparation)
+    assert draft.code_origin == "auditable_ranking_baseline"
+    assert draft.scientific_plan["evidence_class"] == "real_task"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    rows = []
+    topics = ["weather tool", "calendar event", "web search", "math calculator"]
+    for index in range(240):
+        topic = topics[index % len(topics)]
+        relevant = index % 2 == 0
+        candidate = f"use {topic} for task" if relevant else "unrelated generic response"
+        rows.append({
+            "query": topic,
+            "candidate_answer": candidate,
+            "is_relevant": relevant,
+        })
+    (data_dir / "prepared.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "run.py"
+    script.write_text(draft.code, encoding="utf-8")
+    run = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    result = json.loads(run.stdout.strip().splitlines()[-1])
+    spec = ExperimentSpec(
+        project_id=project.id,
+        gap_id=gap.id,
+        name=draft.name,
+        objective=draft.objective,
+        scientific_plan=draft.scientific_plan,
+    )
+    audit = audit_completed_run(spec, result)
+    assert audit.passed
+    assert audit.level == "reproducible_research"
+    assert result["primary_metric"]["name"] == "hit_at_1"
+    assert result["baseline_metrics"]["random_candidate"]["hit_at_1"] <= 1.0
+    assert len(result["per_seed_metrics"]) == 3
+
+
 def test_unrelated_dataset_requires_human_confirmation():
     project = ResearchProject(user_id=uuid4(), title="MOF study", direction="MOF CO2 uptake")
     gap = GapCandidate(
