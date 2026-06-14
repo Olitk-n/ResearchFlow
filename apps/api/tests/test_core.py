@@ -1,6 +1,8 @@
 import hashlib
 import inspect
 import json
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,7 +46,7 @@ from app.services.artifacts import build_manuscript
 from app.services.data_prep import prepare_dataset
 from app.services.embeddings import index_papers, semantic_search
 from app.services.executors import execute_experiment
-from app.services.experiment_agent import validate_generated_code
+from app.services.experiment_agent import fallback_experiment, validate_generated_code
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
 from app.services.open_access import safe_public_https_url
 from app.services.scientific_validity import (
@@ -417,6 +419,74 @@ os.system("whoami")
         assert "forbidden" in str(exc)
     else:
         raise AssertionError("unsafe generated code was accepted")
+
+
+def test_builtin_real_task_baseline_emits_submission_protocol(tmp_path):
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Measured baseline",
+        direction="agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Measured target baseline",
+        hypothesis="Numeric task fields support a reproducible baseline.",
+        rationale="test",
+        confidence=0.8,
+        novelty_score=0.7,
+        feasibility_score=0.8,
+        estimated_cost="low",
+    )
+    preparation = DataPreparation(
+        project_id=project.id,
+        dataset_id=uuid4(),
+        status="completed",
+        row_count=240,
+        schema_json={
+            "feature_a": {"types": {"float": 240}, "examples": [1.0, 2.0]},
+            "feature_b": {"types": {"float": 240}, "examples": [0.5, 1.5]},
+            "score": {"types": {"float": 240}, "examples": [1.2, 2.4]},
+        },
+    )
+    draft = fallback_experiment(project, gap, preparation)
+    assert draft.code_origin == "auditable_real_task_baseline"
+    assert draft.scientific_plan["evidence_class"] == "real_task"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    rows = []
+    for index in range(240):
+        feature_a = float(index)
+        feature_b = float(index % 17)
+        score = 2.0 * feature_a + 0.5 * feature_b
+        rows.append({"feature_a": feature_a, "feature_b": feature_b, "score": score})
+    (data_dir / "prepared.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "run.py"
+    script.write_text(draft.code, encoding="utf-8")
+    run = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    result = json.loads(run.stdout.strip().splitlines()[-1])
+    spec = ExperimentSpec(
+        project_id=project.id,
+        gap_id=gap.id,
+        name=draft.name,
+        objective=draft.objective,
+        scientific_plan=draft.scientific_plan,
+    )
+    audit = audit_completed_run(spec, result)
+    assert audit.passed
+    assert audit.level == "reproducible_research"
+    assert result["primary_metric"]["name"] == "mae"
+    assert len(result["per_seed_metrics"]) == 3
+    assert result["baseline_metrics"]
 
 
 def test_unrelated_dataset_requires_human_confirmation():
