@@ -1571,6 +1571,169 @@ def test_publisher_submission_review_requires_verified_venue_profile(tmp_path):
     )
 
 
+def test_complete_submission_candidate_exports_passing_package(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.artifacts.project_directory",
+        lambda _project_id: tmp_path / "project",
+    )
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Auditable agent evaluation",
+        direction="LLM agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Robustness of agent evaluators under tool failures",
+        hypothesis="A calibrated evaluator is more robust than standard baselines.",
+        rationale="A dated evidence snapshot identifies limited cross-condition evaluation.",
+        confidence=0.8,
+        novelty_score=0.72,
+        feasibility_score=0.85,
+        estimated_cost="low",
+        evidence_ids=["evidence-1", "evidence-2", "evidence-3"],
+    )
+    papers = [
+        PaperRecord(
+            project_id=project.id,
+            source="arxiv",
+            external_id=f"2601.0000{index}",
+            title=f"Verified Agent Evaluation Study {index}",
+            abstract="A directly relevant benchmark and evaluation study.",
+            authors=[f"Researcher {index}"],
+            url=f"https://arxiv.org/abs/2601.0000{index}",
+        )
+        for index in range(1, 4)
+    ]
+    experiment_root = tmp_path / "experiment"
+    (experiment_root / "runtime").mkdir(parents=True)
+    (experiment_root / "data").mkdir()
+    required_files = {
+        "run.py": "print('reproduce')\n",
+        "manifest.json": "{}\n",
+        "pyproject.toml": "[project]\nname='fixture'\nversion='0.1.0'\n",
+        "uv.lock": "version = 1\n",
+        "Dockerfile": "FROM python:3.12-slim\n",
+        "data/data-card.json": '{"license":"apache-2.0"}\n',
+        "runtime/stdout.log": "completed\n",
+        "runtime/stderr.log": "",
+    }
+    for relative, content in required_files.items():
+        path = experiment_root / relative
+        path.write_text(content, encoding="utf-8")
+    result_path = experiment_root / "runtime" / "results.json"
+    result_path.write_text('{"status":"verified"}\n', encoding="utf-8")
+    results = {
+        "primary_metric": {"name": "accuracy", "value": 0.81, "direction": "higher"},
+        "per_seed_metrics": [0.80, 0.81, 0.82],
+        "baseline_metrics": {"majority": 0.62, "standard_evaluator": 0.73},
+        "uncertainty": {"confidence": 0.95, "lower": 0.79, "upper": 0.83, "method": "bootstrap"},
+        "effect_size": {"name": "cohen_d", "value": 0.68},
+        "statistical_test": {"name": "paired_t_test", "statistic": 3.4, "p_value": 0.012},
+        "ablation_results": [
+            {"name": "without_calibration", "metric": "accuracy", "value": 0.76},
+            {"name": "without_failure_features", "metric": "accuracy", "value": 0.74},
+        ],
+        "num_samples": 600,
+        "seeds": [11, 22, 33],
+        "artifact_path": str(result_path),
+        "artifact_sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+    }
+    abstract_sentence = (
+        "This evidence-grounded study evaluates calibrated agent assessment under tool "
+        "failures and reports verified comparative results [paper1]. "
+    )
+    introduction_sentence = (
+        "Prior agent evaluation research motivates cross-condition robustness analysis "
+        "and reproducible comparison [paper1] [paper2]. "
+    )
+    related_sentence = (
+        "Existing benchmarks, evaluator studies, and reliability analyses define the "
+        "comparison space used here [paper1] [paper2] [paper3]. "
+    )
+    draft = ManuscriptDraft(
+        title="Calibrated Evaluation of LLM Agents Under Tool Failures",
+        abstract=abstract_sentence * 14,
+        introduction=introduction_sentence * 35,
+        related_work=related_sentence * 30,
+        method=(
+            "The registered protocol uses 600 licensed task records, fixed seeds 11, 22, "
+            "and 33, an independent test split, two baselines, and a network-isolated "
+            "container. The primary metric is accuracy and the analysis uses bootstrap "
+            "uncertainty, paired testing, effect size estimation, and two prespecified "
+            "ablations. "
+        ) * 18,
+        results=(
+            "The primary metric accuracy was 0.81 over 600 samples. The 95% confidence "
+            "interval was [0.79, 0.83]. Baseline accuracy was 0.62 for majority and 0.73 "
+            "for the standard evaluator. The effect size was Cohen d=0.68. The paired "
+            "statistical test reported statistic=3.4 and p=0.012. Ablation sensitivity "
+            "analysis yielded 0.76 without calibration and 0.74 without failure features. "
+        ) * 12,
+        limitations=(
+            "The evidence is limited to one licensed benchmark, one task family, and the "
+            "registered model configurations. External validity, annotation uncertainty, "
+            "distribution shift, compute budgets, and unobserved failure modes remain "
+            "threats. Results require replication on independent datasets and should not "
+            "be interpreted as universal agent reliability. "
+        ) * 7,
+        conclusion=(
+            "The verified experiment supports a bounded conclusion that calibration "
+            "improved robustness in the registered setting. The artifact package enables "
+            "independent inspection and replication, while broader claims remain outside "
+            "the evidence scope. "
+        ) * 7,
+        mode="submission",
+    )
+
+    root, _compiled, citation_keys = build_manuscript(
+        project,
+        gap,
+        papers,
+        "elsevier_journal",
+        draft=draft,
+        experiment_results=results,
+        experiment_root=experiment_root,
+        quality_level="submission_candidate",
+        publication_name="Verified Applied AI Journal",
+        author_guide_url="https://example.test/author-guide",
+        venue_profile={
+            "claim": "sci_q4",
+            "evidence_url": "https://example.test/indexing",
+            "verified_on": "2026-06-14",
+            "human_verified": True,
+        },
+    )
+
+    review = json.loads(
+        (root / "pre-submission-review.json").read_text(encoding="utf-8"),
+    )
+    assert review["passed"] is True
+    assert review["recommendation"] == "submission_candidate"
+    assert review["summary"] == {"critical": 0, "major": 0, "minor": 0}
+    assert review["evidence"]["used_citation_count"] == 3
+    assert review["evidence"]["manuscript_word_count"] >= 1800
+    assert len(citation_keys) == 3
+    for relative in (
+        "main.tex",
+        "references.bib",
+        "results-tables.tex",
+        "claim-provenance.json",
+        "pre-submission-review.json",
+        "submission-checklist.json",
+        "target-profile.json",
+        "cover-letter.txt",
+        "artifact-index.json",
+        "reproducibility/run.py",
+        "reproducibility/runtime/results.json",
+    ):
+        assert (root / relative).exists(), relative
+    artifact_index = json.loads(
+        (root / "artifact-index.json").read_text(encoding="utf-8"),
+    )
+    assert "pre-submission-review.json" in artifact_index["files"]
+    assert "reproducibility/runtime/results.json" in artifact_index["files"]
+
+
 async def test_prepared_dataset_hash_matches_exact_file_bytes(monkeypatch):
     async def fake_rows(_dataset_id, max_rows=100):
         return "default", "train", [{"text": "line one"}, {"text": "第二行"}], 2
