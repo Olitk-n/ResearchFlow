@@ -41,6 +41,7 @@ class ExperimentDraft:
     expected_outputs: list[str]
     code: str
     code_origin: str
+    scientific_plan: dict
 
 
 def validate_generated_code(code: str) -> None:
@@ -129,6 +130,22 @@ print(json.dumps(result, sort_keys=True))
         expected_outputs=["results.json", "stdout JSON summary"],
         code=code,
         code_origin="auditable_fallback",
+        scientific_plan={
+            "field_mapping": {"input": "all prepared fields", "target": None},
+            "target_variable": "none; descriptive baseline only",
+            "model": "none",
+            "split_strategy": "none",
+            "baselines": ["descriptive data-quality baseline"],
+            "metric_definitions": {
+                "sample_rows": "number of prepared JSONL rows",
+                "non_null_by_column": "non-null values per field",
+            },
+            "statistical_analysis": "descriptive only; no performance inference",
+            "seeds": [42],
+            "parameters": {},
+            "expected_sample_count": preparation.row_count,
+            "evidence_class": "descriptive",
+        },
     )
 
 
@@ -151,7 +168,9 @@ async def generate_experiment(
             "data/prepared.jsonl, write results.json, print the same result as JSON, "
             "use seed 42 where randomness exists, and never access network, credentials, "
             "other files, subprocesses, shell commands, eval, or exec. Do not invent "
-            "performance results. Derive metrics from actual rows."
+            "performance results. Derive metrics from actual rows. Never create random "
+            "or simulated ground-truth labels. If the data lacks a valid target field, "
+            "produce a descriptive baseline and label it as such."
         ),
         prompt=(
             f"Project: {project.title}\nDirection: {project.direction}\n"
@@ -166,6 +185,19 @@ async def generate_experiment(
             "methodology": ["string"],
             "expected_outputs": ["results.json"],
             "code": "complete Python source",
+            "scientific_plan": {
+                "field_mapping": {"input": "source field names", "target": "source field name or null"},
+                "target_variable": "measured target and units, or none",
+                "model": "implemented model or none",
+                "split_strategy": "train/validation/test procedure or none",
+                "baselines": ["implemented baseline"],
+                "metric_definitions": {"metric": "exact formula and direction"},
+                "statistical_analysis": "uncertainty procedure",
+                "seeds": [42, 43, 44],
+                "parameters": {"k": "integer when applicable"},
+                "expected_sample_count": preparation.row_count,
+                "evidence_class": "real_task or descriptive",
+            },
         },
         max_tokens=5000,
         purpose="experiment_generation",
@@ -180,4 +212,5 @@ async def generate_experiment(
         expected_outputs=[str(item)[:200] for item in response["expected_outputs"]][:12],
         code=code,
         code_origin="llm",
+        scientific_plan=dict(response.get("scientific_plan") or {}),
     )

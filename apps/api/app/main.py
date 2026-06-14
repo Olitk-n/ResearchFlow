@@ -24,7 +24,7 @@ from sqlmodel import select
 
 from .auth import CurrentUser
 from .config import get_settings
-from .db import SessionDep, create_db_and_tables
+from .db import SessionDep, create_db_and_tables, engine
 from .models import (
     CitationEdge,
     CoverageMatrix,
@@ -51,6 +51,7 @@ from .providers.llm import PROVIDER_PRESETS, LLMConfig, probe_model
 from .schemas import (
     AuthRequest,
     AuthResponse,
+    DatasetValidityConfirmation,
     ExperimentRunRequest,
     GapSelection,
     ManuscriptRequest,
@@ -71,8 +72,14 @@ from .services.artifacts import (
 from .services.embeddings import semantic_search
 from .services.executors import execute_experiment
 from .services.manuscript_agent import generate_manuscript
+from .services.scientific_validity import (
+    audit_completed_run,
+    backfill_scientific_validity,
+    submission_gate,
+)
 from .services.venue_templates import TemplateUnavailable
 from .services.workflow import (
+    continue_confirmed_dataset,
     default_model_config,
     discover_project,
     emit,
@@ -88,6 +95,10 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_db_and_tables()
+    from sqlmodel import Session
+
+    with Session(engine) as session:
+        backfill_scientific_validity(session)
     yield
 
 
@@ -570,6 +581,17 @@ async def run_experiment(
     )
     run.status = RunStatus(status)
     run.results = results
+    if status == "completed":
+        run_audit = audit_completed_run(spec, results)
+        run.validity_audit = run_audit.as_dict()
+        run.quality_level = run_audit.level
+        results["validity_audit"] = run_audit.as_dict()
+    else:
+        run.validity_audit = {
+            "passed": False,
+            "level": "concept_draft",
+            "findings": ["Experiment did not complete successfully."],
+        }
     run.finished_at = datetime.now(UTC)
     run.logs_path = str(Path(spec.artifact_path) / "runtime")
     session.add(run)
@@ -577,6 +599,68 @@ async def run_experiment(
     emit(session, project.id, "experiment", f"实验状态：{status}", **results)
     session.refresh(run)
     return run
+
+
+@app.post("/projects/{project_id}/confirm-dataset-validity")
+async def confirm_dataset_validity(
+    project_id: UUID,
+    body: DatasetValidityConfirmation,
+    user: CurrentUser,
+    session: SessionDep,
+):
+    project = own_project(session, user, project_id)
+    dataset = session.get(DatasetAsset, body.dataset_id)
+    if not dataset or dataset.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    if not body.confirmed:
+        raise HTTPException(status_code=422, detail="Confirmation must be explicit.")
+    preparation = session.exec(
+        select(DataPreparation)
+        .where(
+            DataPreparation.project_id == project.id,
+            DataPreparation.dataset_id == dataset.id,
+            DataPreparation.status == RunStatus.COMPLETED,
+        )
+        .order_by(DataPreparation.created_at.desc())
+    ).first()
+    gap = session.get(GapCandidate, project.selected_gap_id) if project.selected_gap_id else None
+    if not preparation or not gap:
+        raise HTTPException(status_code=409, detail="Prepared data or selected gap is missing.")
+    dataset.human_confirmed = True
+    dataset.validity_audit = {
+        **dataset.validity_audit,
+        "human_confirmation": {
+            "confirmed": True,
+            "reason": body.reason,
+            "confirmed_at": datetime.now(UTC).isoformat(),
+        },
+    }
+    session.add(dataset)
+    session.commit()
+    spec = await continue_confirmed_dataset(session, project, gap, dataset, preparation)
+    checkpoint = session.exec(
+        select(WorkflowCheckpoint)
+        .where(
+            WorkflowCheckpoint.project_id == project.id,
+            WorkflowCheckpoint.stage == "dataset_validity",
+            WorkflowCheckpoint.status == "awaiting_human",
+        )
+        .order_by(WorkflowCheckpoint.created_at.desc())
+    ).first()
+    if checkpoint:
+        checkpoint.status = "completed"
+        checkpoint.requires_action = False
+        checkpoint.updated_at = datetime.now(UTC)
+        session.add(checkpoint)
+        session.commit()
+    emit(
+        session,
+        project.id,
+        "dataset_validity",
+        "Human accepted the dataset mismatch risk; experiment is labeled accordingly.",
+        reason=body.reason,
+    )
+    return spec
 
 
 @app.post("/projects/{project_id}/manuscript")
@@ -609,6 +693,29 @@ async def manuscript(
             status_code=409,
             detail="结果稿必须基于已完成的实验运行",
         )
+    latest_spec = session.exec(
+        select(ExperimentSpec)
+        .where(ExperimentSpec.project_id == project.id)
+        .order_by(ExperimentSpec.created_at.desc())
+    ).first()
+    gate_audit = None
+    if body.mode == "submission":
+        if not latest_spec or not completed_run:
+            raise HTTPException(status_code=409, detail="A completed audited experiment is required.")
+        gate_audit = submission_gate(
+            latest_spec,
+            completed_run.validity_audit,
+            len(papers),
+        )
+        if not gate_audit.passed:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Submission manuscript is blocked by scientific validity gates.",
+                    "quality_level": gate_audit.level,
+                    "findings": gate_audit.findings,
+                },
+            )
     experiment_results = completed_run.results if completed_run else None
     model_config = default_model_config(session, project.user_id)
     try:
@@ -657,15 +764,32 @@ async def manuscript(
             body.target,
             draft=draft,
             experiment_results=experiment_results,
+            experiment_root=Path(latest_spec.artifact_path) if latest_spec and latest_spec.artifact_path else None,
+            quality_level=(
+                gate_audit.level
+                if gate_audit
+                else (completed_run.quality_level if completed_run else "concept_draft")
+            ),
         )
     except TemplateUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     build = ManuscriptBuild(
         project_id=project.id,
         target=body.target,
         status=RunStatus.COMPLETED if compiled else RunStatus.BLOCKED,
         artifact_path=str(root),
         citation_keys=citation_keys,
+        mode=body.mode,
+        quality_level=(
+            gate_audit.level
+            if gate_audit
+            else (completed_run.quality_level if completed_run else "concept_draft")
+        ),
+        validity_audit=gate_audit.as_dict() if gate_audit else (
+            completed_run.validity_audit if completed_run else {}
+        ),
     )
     session.add(build)
     session.commit()

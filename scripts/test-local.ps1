@@ -24,8 +24,13 @@ Push-Location $webRoot
 try {
     npm run lint
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
-    npm run build
-    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    $webIsRunning = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+    if ($webIsRunning) {
+        Write-Host "Web development server is running; skipping production build to preserve its .next cache."
+    } else {
+        npm run build
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    }
 } finally {
     Pop-Location
 }

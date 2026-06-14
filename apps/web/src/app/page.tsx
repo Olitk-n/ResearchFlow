@@ -46,6 +46,13 @@ import {
 } from "@/lib/api";
 
 type View = "overview" | "literature" | "gaps" | "data" | "experiment" | "paper";
+const QUALITY_LABELS: Record<string, string> = {
+  concept_draft: "概念草稿",
+  synthetic_demonstration: "模拟演示",
+  initial_experiment: "初步实验",
+  reproducible_research: "可复现研究",
+  submission_candidate: "投稿候选",
+};
 type ModelConfig = {
   id: string;
   name: string;
@@ -547,6 +554,26 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     }, token));
   }
 
+  async function confirmDatasetValidity(dataset: Dataset) {
+    if (!selected) return;
+    const reason = window.prompt(
+      "该数据集与课题的自动适配审查未通过。请说明仍要继续使用它的科学理由（至少 10 个字符）：",
+    );
+    if (!reason || reason.trim().length < 10) return;
+    await action("dataset-confirm", () => api(
+      `/projects/${selected.id}/confirm-dataset-validity`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dataset_id: dataset.id,
+          confirmed: true,
+          reason: reason.trim(),
+        }),
+      },
+      token,
+    ));
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -718,6 +745,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
               <DatasetView
                 datasets={detail?.datasets || []}
                 preparations={detail?.data_preparations || []}
+                onConfirm={confirmDatasetValidity}
+                busy={busy === "dataset-confirm"}
               />
             )}
             {view === "experiment" && (
@@ -733,7 +762,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             {view === "paper" && (
               <ManuscriptView
                 builds={detail?.manuscripts || []}
-                hasCompletedRun={Boolean(detail?.experiment_runs.some((run) => run.status === "completed"))}
+                hasCompletedRun={Boolean(detail?.experiment_runs.some(
+                  (run) => run.status === "completed" && run.quality_level === "reproducible_research",
+                ))}
                 busy={busy === "manuscript"}
                 onGenerate={generateManuscript}
                 onDownload={() => downloadArtifact(selected.id, "manuscript", token)}
@@ -751,9 +782,13 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
 function DatasetView({
   datasets,
   preparations,
+  onConfirm,
+  busy,
 }: {
   datasets: Dataset[];
   preparations: DataPreparation[];
+  onConfirm: (dataset: Dataset) => void;
+  busy: boolean;
 }) {
   const preparationByDataset = new Map(
     preparations.map((item) => [item.dataset_id, item]),
@@ -777,6 +812,23 @@ function DatasetView({
               <h3>{dataset.name}</h3>
               <p>{dataset.quality_notes}</p>
               <div className="license"><ShieldCheck size={15} />许可：{dataset.license || "待人工确认"}</div>
+              {dataset.validity_audit?.level && (
+                <div className="constraint-note">
+                  科学适配：{QUALITY_LABELS[dataset.validity_audit.level] || dataset.validity_audit.level}
+                  {dataset.validity_audit.findings?.map((finding) => (
+                    <div key={finding}>• {finding}</div>
+                  ))}
+                </div>
+              )}
+              {dataset.validity_audit?.passed === false && !dataset.human_confirmed && (
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => onConfirm(dataset)}
+                >
+                  人工确认风险并继续
+                </button>
+              )}
               {preparation && (
                 <div className="data-proof">
                   <b>{preparation.row_count} 条可复现样本</b>
@@ -846,6 +898,7 @@ function ExperimentView({
             <p>{experiment?.objective || "选择课题后系统会处理数据、生成安全代码与复现实验包。"}</p>
             {experiment && (
               <div className="run-facts">
+                <span>证据等级 <b>{QUALITY_LABELS[latestRun?.quality_level || experiment.quality_level] || latestRun?.quality_level || experiment.quality_level}</b></span>
                 <span>代码来源 <b>{codeOrigin === "llm" ? "大模型生成并通过 AST 审查" : "可审计离线回退"}</b></span>
                 <span>网络权限 <b>关闭</b></span>
                 <span>最近运行 <b>{latestRun?.status || "尚未执行"}</b></span>
@@ -871,7 +924,14 @@ function ManuscriptView({
   onGenerate,
   onDownload,
 }: {
-  builds: Array<{ id: string; target: string; status: string }>;
+  builds: Array<{
+    id: string;
+    target: string;
+    status: string;
+    mode: string;
+    quality_level: string;
+    validity_audit: { passed?: boolean; findings?: string[] };
+  }>;
   hasCompletedRun: boolean;
   busy: boolean;
   onGenerate: (target: string, mode: "draft" | "submission") => void;
@@ -904,6 +964,14 @@ function ManuscriptView({
         <div className="build-card">
           <FileText size={28} />
           <h3>{latest ? `${latest.target.toUpperCase()} 工程已生成` : "生成论文工程"}</h3>
+          {latest && (
+            <div className="constraint-note">
+              证据等级：{QUALITY_LABELS[latest.quality_level] || latest.quality_level}
+              {latest.validity_audit?.findings?.map((finding) => (
+                <div key={finding}>• {finding}</div>
+              ))}
+            </div>
+          )}
           <p>{latest ? (latest.status === "completed" ? "LaTeX、BibTeX 与 PDF 已完成。" : "LaTeX 与 BibTeX 已完成；本机缺少 LaTeX 编译器。") : "没有完成实验时只能生成明确标注的研究草稿。"}</p>
           <div className="build-controls">
             <label>目标模板

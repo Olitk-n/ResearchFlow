@@ -48,6 +48,7 @@ from .gaps import (
 from .open_access import ingest_open_access_papers
 from .paper_graph import record_paper_graph
 from .research_graph import research_phase_graph
+from .scientific_validity import audit_dataset_fit, audit_experiment_code
 
 
 def emit(session: Session, project_id: UUID, stage: str, message: str, **payload) -> None:
@@ -112,6 +113,62 @@ def persist_model_usage(
         )
     config.usage_records.clear()
     session.commit()
+
+
+async def continue_confirmed_dataset(
+    session: Session,
+    project: ResearchProject,
+    gap: GapCandidate,
+    dataset: DatasetAsset,
+    preparation: DataPreparation,
+) -> ExperimentSpec:
+    model_config = default_model_config(session, project.user_id)
+    try:
+        experiment = await generate_experiment(project, gap, dataset, preparation, model_config)
+    except Exception:
+        experiment = await generate_experiment(project, gap, dataset, preparation, None)
+    persist_model_usage(session, project.id, model_config)
+    code_audit = audit_experiment_code(experiment.code, experiment.scientific_plan)
+    if not (dataset.validity_audit or {}).get("passed"):
+        code_audit.passed = False
+        code_audit.findings.append(
+            "Dataset mismatch was accepted by a human; scientific validity remains unresolved."
+        )
+        if code_audit.level != "synthetic_demonstration":
+            code_audit.level = "concept_draft"
+    spec = ExperimentSpec(
+        project_id=project.id,
+        gap_id=gap.id,
+        name=experiment.name,
+        objective=experiment.objective,
+        metrics=experiment.metrics,
+        scientific_plan=experiment.scientific_plan,
+        validity_audit=code_audit.as_dict(),
+        quality_level=code_audit.level,
+        resource_profile={
+            "cpu": 2,
+            "memory_gb": 4,
+            "gpu": False,
+            "network": False,
+            "methodology": experiment.methodology,
+            "expected_outputs": experiment.expected_outputs,
+            "code_origin": experiment.code_origin,
+            "dataset_preparation_id": str(preparation.id),
+            "dataset_id": str(dataset.id),
+        },
+    )
+    session.add(spec)
+    session.commit()
+    session.refresh(spec)
+    spec.artifact_path = str(
+        build_experiment_package(project, gap, dataset, preparation, experiment)
+    )
+    project.status = ProjectStatus.READY
+    session.add(spec)
+    session.add(project)
+    session.commit()
+    session.refresh(spec)
+    return spec
 
 
 def set_checkpoint(
@@ -794,6 +851,41 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
             session.add(preparation)
             session.commit()
             session.refresh(preparation)
+            dataset_audit = audit_dataset_fit(project, gap, selected_dataset, preparation)
+            selected_dataset.validity_audit = dataset_audit.as_dict()
+            session.add(selected_dataset)
+            session.commit()
+            if (
+                preparation.status == RunStatus.COMPLETED
+                and not dataset_audit.passed
+                and not selected_dataset.human_confirmed
+            ):
+                project.status = ProjectStatus.PAUSED
+                session.add(project)
+                session.commit()
+                set_checkpoint(
+                    session,
+                    project.id,
+                    workflow_run_id,
+                    "plan",
+                    "dataset_validity",
+                    "awaiting_human",
+                    state={
+                        "gap_id": str(gap.id),
+                        "dataset_id": str(selected_dataset.id),
+                        "preparation_id": str(preparation.id),
+                        "audit": dataset_audit.as_dict(),
+                    },
+                    requires_action=True,
+                )
+                emit(
+                    session,
+                    project.id,
+                    "dataset_validity",
+                    "Dataset-topic fit failed. Human confirmation is required.",
+                    audit=dataset_audit.as_dict(),
+                )
+                return
             if preparation.status != RunStatus.COMPLETED:
                 raise RuntimeError(preparation.profile_json.get("reason", "数据处理失败"))
             emit(
@@ -860,12 +952,23 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
                     None,
                 )
             persist_model_usage(session, project.id, model_config)
+            code_audit = audit_experiment_code(experiment.code, experiment.scientific_plan)
+            if not dataset_audit.passed:
+                code_audit.passed = False
+                code_audit.findings.append(
+                    "Dataset-topic fit did not pass the scientific audit."
+                )
+                if code_audit.level != "synthetic_demonstration":
+                    code_audit.level = "concept_draft"
             spec = ExperimentSpec(
                 project_id=project.id,
                 gap_id=gap.id,
                 name=experiment.name,
                 objective=experiment.objective,
                 metrics=experiment.metrics,
+                scientific_plan=experiment.scientific_plan,
+                validity_audit=code_audit.as_dict(),
+                quality_level=code_audit.level,
                 resource_profile={
                     "cpu": 2,
                     "memory_gb": 4,
@@ -875,6 +978,7 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
                     "expected_outputs": experiment.expected_outputs,
                     "code_origin": experiment.code_origin,
                     "dataset_preparation_id": str(preparation.id),
+                    "dataset_id": str(selected_dataset.id),
                 },
             )
             session.add(spec)

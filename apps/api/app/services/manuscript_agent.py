@@ -28,8 +28,16 @@ def fallback_manuscript(
     mode: str,
 ) -> ManuscriptDraft:
     paper_names = "; ".join(f"{paper.title} [paper{index}]" for index, paper in enumerate(papers[:5], start=1))
+    synthetic = bool(
+        (experiment_results or {})
+        .get("validity_audit", {})
+        .get("details", {})
+        .get("synthetic")
+    )
     if experiment_results:
         results = (
+            ("This is a synthetic demonstration, not a domain experiment. " if synthetic else "")
+            +
             "The completed sandbox run produced the following immutable result "
             f"record: {json.dumps(experiment_results, ensure_ascii=False, sort_keys=True)}. "
             "These values are descriptive until a domain-specific statistical analysis "
@@ -67,7 +75,12 @@ def fallback_manuscript(
         limitations=(
             "The literature search is not exhaustive, provider APIs may omit records, "
             "the prepared dataset is a preview sample, and model-generated research "
-            "decisions require expert review. No unobserved result is inferred."
+            "decisions require expert review. No unobserved result is inferred. "
+            + (
+                "Synthetic outputs cannot support real-world domain-performance claims."
+                if synthetic
+                else ""
+            )
         ),
         conclusion=(
             "The artifact establishes an auditable research workflow. Strong scientific "
@@ -103,6 +116,12 @@ async def generate_manuscript(
         }
         for index, paper in enumerate(papers[:12], start=1)
     ]
+    synthetic = bool(
+        (experiment_results or {})
+        .get("validity_audit", {})
+        .get("details", {})
+        .get("synthetic")
+    )
     response = await complete_json(
         model,
         system=(
@@ -110,7 +129,9 @@ async def generate_manuscript(
             "literature and experiment results. Never invent a citation, dataset fact, "
             "metric, number, result, or novelty claim. Refer to literature only with the "
             "provided citation keys such as [paper1]. If results are absent, explicitly "
-            "state that the section is a plan without empirical claims."
+            "state that the section is a plan without empirical claims. If the experiment "
+            "is synthetic, repeatedly and explicitly call it a synthetic demonstration and "
+            "do not make domain-performance claims."
         ),
         prompt=(
             f"Target: {target}; mode: {mode}\nProject: {project.title}\n"
@@ -118,7 +139,8 @@ async def generate_manuscript(
             f"Hypothesis: {gap.hypothesis}\nRationale: {gap.rationale}\n"
             f"Literature: {json.dumps(citations, ensure_ascii=False)}\n"
             f"Experiment results: "
-            f"{json.dumps(experiment_results, ensure_ascii=False) if experiment_results else 'NONE'}"
+            f"{json.dumps(experiment_results, ensure_ascii=False) if experiment_results else 'NONE'}\n"
+            f"Synthetic demonstration: {synthetic}"
         ),
         schema_hint={
             "title": "string",
@@ -142,6 +164,13 @@ async def generate_manuscript(
         for token in ("we achieved", "our accuracy", "outperformed", "significant")
     ):
         raise ValueError("model produced an empirical claim without a completed run")
+    if synthetic:
+        joined = " ".join(
+            str(response.get(key, ""))
+            for key in ("abstract", "method", "results", "limitations", "conclusion")
+        ).casefold()
+        if "synthetic" not in joined:
+            raise ValueError("synthetic experiment was not explicitly disclosed")
     return ManuscriptDraft(
         title=str(response["title"])[:400],
         abstract=str(response["abstract"])[:4000],

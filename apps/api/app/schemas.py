@@ -44,3 +44,9 @@ class ExperimentRunRequest(BaseModel):
     allow_network: bool = False
     timeout_seconds: int = Field(default=300, ge=10, le=3600)
     executor: Literal["docker", "cloud_disabled"] = "docker"
+
+
+class DatasetValidityConfirmation(BaseModel):
+    dataset_id: UUID
+    confirmed: bool
+    reason: str = Field(min_length=10, max_length=1000)

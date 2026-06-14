@@ -146,6 +146,13 @@ export type Dataset = {
   size_hint?: string;
   quality_notes: string;
   metadata_json: Record<string, unknown>;
+  validity_audit: {
+    passed?: boolean;
+    level?: string;
+    findings?: string[];
+    details?: Record<string, unknown>;
+  };
+  human_confirmed: boolean;
 };
 
 export type DataPreparation = {
@@ -168,6 +175,13 @@ export type Experiment = {
   objective: string;
   artifact_path?: string;
   resource_profile: Record<string, unknown>;
+  scientific_plan: Record<string, unknown>;
+  validity_audit: {
+    passed?: boolean;
+    level?: string;
+    findings?: string[];
+  };
+  quality_level: string;
 };
 
 export type ExperimentRun = {
@@ -178,6 +192,12 @@ export type ExperimentRun = {
   finished_at?: string;
   results: Record<string, unknown>;
   logs_path?: string;
+  validity_audit: {
+    passed?: boolean;
+    level?: string;
+    findings?: string[];
+  };
+  quality_level: string;
 };
 
 export type Event = {
@@ -215,6 +235,12 @@ export type ProjectDetail = {
     target: string;
     status: string;
     artifact_path?: string;
+    mode: string;
+    quality_level: string;
+    validity_audit: {
+      passed?: boolean;
+      findings?: string[];
+    };
   }>;
   workflow_checkpoints: Array<{
     id: string;

@@ -31,6 +31,33 @@ def create_db_and_tables() -> None:
             connection.execute(
                 text("ALTER TABLE modelconfig ADD COLUMN api_key_hint VARCHAR")
             )
+    additive_columns = {
+        "datasetasset": {
+            "validity_audit": "JSON NOT NULL DEFAULT '{}'",
+            "human_confirmed": "BOOLEAN NOT NULL DEFAULT 0",
+        },
+        "experimentspec": {
+            "scientific_plan": "JSON NOT NULL DEFAULT '{}'",
+            "validity_audit": "JSON NOT NULL DEFAULT '{}'",
+            "quality_level": "VARCHAR NOT NULL DEFAULT 'concept_draft'",
+        },
+        "experimentrun": {
+            "validity_audit": "JSON NOT NULL DEFAULT '{}'",
+            "quality_level": "VARCHAR NOT NULL DEFAULT 'concept_draft'",
+        },
+        "manuscriptbuild": {
+            "mode": "VARCHAR NOT NULL DEFAULT 'draft'",
+            "quality_level": "VARCHAR NOT NULL DEFAULT 'concept_draft'",
+            "validity_audit": "JSON NOT NULL DEFAULT '{}'",
+        },
+    }
+    with engine.begin() as connection:
+        inspector = inspect(engine)
+        for table, columns in additive_columns.items():
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
         if "spent_usd" not in model_columns:
             connection.execute(
                 text(

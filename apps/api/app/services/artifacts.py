@@ -20,6 +20,7 @@ from ..models import (
 )
 from .experiment_agent import ExperimentDraft
 from .manuscript_agent import ManuscriptDraft
+from .scientific_validity import build_claim_provenance, copy_reproducibility_bundle
 from .venue_templates import ensure_official_template
 
 ARXIV_TEMPLATE = r"""
@@ -33,6 +34,7 @@ ARXIV_TEMPLATE = r"""
 \date{}
 \begin{document}
 \maketitle
+\noindent\textbf{Evidence level: {{ quality_level }}.}
 \begin{abstract}
 {{ abstract }}
 \end{abstract}
@@ -68,6 +70,7 @@ ICLR_TEMPLATE = r"""
 \author{Anonymous Authors}
 \begin{document}
 \maketitle
+\noindent\textbf{Evidence level: {{ quality_level }}.}
 \begin{abstract}
 {{ abstract }}
 \end{abstract}
@@ -112,6 +115,7 @@ ICML_TEMPLATE = r"""
 \vskip 0.3in
 ]
 \printAffiliationsAndNotice{}
+\noindent\textbf{Evidence level: {{ quality_level }}.}
 \begin{abstract}
 {{ abstract }}
 \end{abstract}
@@ -147,6 +151,7 @@ NEURIPS_TEMPLATE = r"""
 \author{Anonymous Authors}
 \begin{document}
 \maketitle
+\noindent\textbf{Evidence level: {{ quality_level }}.}
 \begin{abstract}
 {{ abstract }}
 \end{abstract}
@@ -335,6 +340,7 @@ def build_experiment_package(
             "expected_outputs": experiment.expected_outputs,
             "code_origin": experiment.code_origin,
             "code_sha256": hashlib.sha256(experiment.code.encode("utf-8")).hexdigest(),
+            "scientific_plan": experiment.scientific_plan,
         },
         "limits": {"network": False, "cpus": 2, "memory": "4g", "timeout_seconds": 300},
         "base_image": base_image,
@@ -447,6 +453,8 @@ def build_manuscript(
     target: str,
     draft: ManuscriptDraft | None = None,
     experiment_results: dict | None = None,
+    experiment_root: Path | None = None,
+    quality_level: str = "concept_draft",
 ) -> tuple[Path, bool, list[str]]:
     root = project_directory(project.id) / "manuscript" / target
     root.mkdir(parents=True, exist_ok=True)
@@ -484,6 +492,7 @@ def build_manuscript(
         results=latex_escape(draft.results, citation_keys),
         limitations=latex_escape(draft.limitations, citation_keys),
         conclusion=latex_escape(draft.conclusion, citation_keys),
+        quality_level=latex_escape(quality_level.replace("_", " "), citation_keys),
     )
     (root / "main.tex").write_text(tex.strip() + "\n", encoding="utf-8")
     (root / "references.bib").write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8")
@@ -500,17 +509,45 @@ def build_manuscript(
                 "template": template_metadata,
                 "manuscript_mode": draft.mode,
                 "experiment_results_present": experiment_results is not None,
+                "quality_level": quality_level,
             },
             indent=2,
         ),
         encoding="utf-8",
     )
+    sections = {
+        "abstract": draft.abstract,
+        "introduction": draft.introduction,
+        "related_work": draft.related_work,
+        "method": draft.method,
+        "results": draft.results,
+        "limitations": draft.limitations,
+        "conclusion": draft.conclusion,
+    }
+    claims = build_claim_provenance(
+        sections,
+        citation_keys,
+        experiment_results,
+        gap.evidence_ids,
+    )
+    unresolved = [
+        claim
+        for claim in claims
+        if claim["source"]["type"] == "unresolved"
+        and claim["section"] in {"abstract", "introduction", "related_work", "results"}
+    ]
+    if draft.mode == "submission" and unresolved:
+        raise ValueError(
+            f"submission manuscript contains {len(unresolved)} unresolved scientific claims"
+        )
     (root / "claim-provenance.json").write_text(
         json.dumps(
             {
                 "citation_keys": citation_keys,
                 "experiment_results": experiment_results,
                 "gap_evidence_ids": gap.evidence_ids,
+                "quality_level": quality_level,
+                "claims": claims,
                 "warning": (
                     "Low coverage is not proof of global novelty. Only completed run outputs support numerical claims."
                 ),
@@ -520,6 +557,7 @@ def build_manuscript(
         ),
         encoding="utf-8",
     )
+    copy_reproducibility_bundle(root, experiment_root)
     compiled = False
     pdflatex = find_executable("pdflatex")
     bibtex = find_executable("bibtex")

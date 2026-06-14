@@ -46,6 +46,13 @@ from app.services.executors import execute_experiment
 from app.services.experiment_agent import validate_generated_code
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
 from app.services.open_access import safe_public_https_url
+from app.services.scientific_validity import (
+    audit_completed_run,
+    audit_dataset_fit,
+    audit_experiment_code,
+    copy_reproducibility_bundle,
+    submission_gate,
+)
 from app.services.venue_templates import ensure_official_template
 from app.services.workflow import (
     discover_project,
@@ -311,7 +318,11 @@ async def test_mocked_discovery_to_experiment_package(monkeypatch, tmp_path):
             status="completed",
             config_name="default",
             split_name="train",
-            row_count=1,
+            row_count=30,
+            schema_json={
+                "prompt": {"types": {"str": 30}, "examples": ["agent task"]},
+                "score": {"types": {"int": 30}, "examples": [1]},
+            },
             content_hash=("4f6bc3ab9b5f15bdf0f9fc919ad65f504a42d43f7e4f3fbfcb1fdbb657e3a689"),
             artifact_path=str(data_root),
         )
@@ -368,7 +379,7 @@ async def test_mocked_discovery_to_experiment_package(monkeypatch, tmp_path):
         ).first()
         assert refreshed.status == "ready"
         assert datasets[0].license == "apache-2.0"
-        assert preparations[0].row_count == 1
+        assert preparations[0].row_count == 30
         assert spec and spec.artifact_path
         assert spec.resource_profile["code_origin"] == "auditable_fallback"
         assert plan_checkpoint
@@ -403,6 +414,134 @@ os.system("whoami")
         assert "forbidden" in str(exc)
     else:
         raise AssertionError("unsafe generated code was accepted")
+
+
+def test_unrelated_dataset_requires_human_confirmation():
+    project = ResearchProject(user_id=uuid4(), title="MOF study", direction="MOF CO2 uptake")
+    gap = GapCandidate(
+        project_id=project.id,
+        title="MOF gas storage ranking",
+        hypothesis="Decision metrics improve MOF selection.",
+        rationale="test",
+        confidence=0.5,
+        novelty_score=0.5,
+        feasibility_score=0.5,
+        estimated_cost="low",
+    )
+    dataset = DatasetAsset(
+        project_id=project.id,
+        gap_id=gap.id,
+        source="huggingface",
+        external_id="museum/paintings",
+        name="museum paintings",
+        url="https://example.test",
+        license="mit",
+    )
+    preparation = DataPreparation(
+        project_id=project.id,
+        dataset_id=dataset.id,
+        status="completed",
+        row_count=53,
+        schema_json={
+            "object_description": {"types": {"str": 53}, "examples": ["oil on canvas"]},
+        },
+    )
+    audit = audit_dataset_fit(project, gap, dataset, preparation)
+    assert not audit.passed
+    assert audit.details["human_confirmation_required"]
+    assert "No numeric target" in " ".join(audit.findings)
+
+
+def test_random_ground_truth_is_labeled_synthetic_demonstration():
+    plan = {
+        "field_mapping": {"input": "x", "target": "y"},
+        "target_variable": "uptake",
+        "model": "surrogate",
+        "split_strategy": "held out",
+        "baselines": ["mean"],
+        "metric_definitions": {"mae": "mean absolute error"},
+        "statistical_analysis": "bootstrap confidence interval",
+        "seeds": [42, 43, 44],
+    }
+    audit = audit_experiment_code(
+        "import random\ntrue_value = random.uniform(1, 10)\n"
+        "open('data/prepared.jsonl').read()\nopen('results.json','w').write('{}')",
+        plan,
+    )
+    assert audit.passed
+    assert audit.level == "synthetic_demonstration"
+    assert audit.details["synthetic"]
+
+
+def test_run_audit_rejects_registered_parameter_mismatch():
+    spec = ExperimentSpec(
+        project_id=uuid4(),
+        gap_id=uuid4(),
+        name="test",
+        objective="test",
+        scientific_plan={
+            "expected_sample_count": 100,
+            "parameters": {"k": 10},
+            "seeds": [42, 43, 44],
+            "baselines": ["mean"],
+            "statistical_analysis": "bootstrap",
+        },
+    )
+    audit = audit_completed_run(
+        spec,
+        {
+            "num_samples": 53,
+            "seed": 42,
+            "parameters": {"k": 5},
+            "metrics": {"mae": 0.3},
+        },
+    )
+    assert not audit.passed
+    assert "Sample count mismatch" in " ".join(audit.findings)
+    assert "Parameter k mismatch" in " ".join(audit.findings)
+
+
+def test_submission_gate_requires_real_multiseed_statistical_evidence():
+    spec = ExperimentSpec(
+        project_id=uuid4(),
+        gap_id=uuid4(),
+        name="test",
+        objective="test",
+        scientific_plan={
+            "baselines": ["random"],
+            "seeds": [42],
+            "statistical_analysis": "",
+        },
+    )
+    gate = submission_gate(
+        spec,
+        {"passed": True, "level": "synthetic_demonstration"},
+        citation_count=12,
+    )
+    assert not gate.passed
+    assert any("Synthetic" in finding for finding in gate.findings)
+    assert any("three seeds" in finding for finding in gate.findings)
+
+
+def test_reproducibility_bundle_copies_code_data_card_lock_logs_and_results(tmp_path):
+    experiment = tmp_path / "experiment"
+    manuscript = tmp_path / "manuscript"
+    for relative in (
+        "run.py",
+        "manifest.json",
+        "uv.lock",
+        "data/data-card.json",
+        "runtime/results.json",
+        "runtime/stdout.log",
+    ):
+        path = experiment / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+    manuscript.mkdir()
+    copy_reproducibility_bundle(manuscript, experiment)
+    assert (manuscript / "reproducibility/run.py").exists()
+    assert (manuscript / "reproducibility/data/data-card.json").exists()
+    assert (manuscript / "reproducibility/runtime/results.json").exists()
 
 
 def test_cloud_executor_is_disabled_without_billable_action(tmp_path):

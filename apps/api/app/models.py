@@ -247,6 +247,8 @@ class DatasetAsset(SQLModel, table=True):
     size_hint: str | None = None
     quality_notes: str = ""
     metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    validity_audit: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    human_confirmed: bool = False
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -275,6 +277,9 @@ class ExperimentSpec(SQLModel, table=True):
     metrics: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     seed: int = 42
     resource_profile: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    scientific_plan: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    validity_audit: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    quality_level: str = "concept_draft"
     artifact_path: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
 
@@ -289,6 +294,8 @@ class ExperimentRun(SQLModel, table=True):
     exit_code: int | None = None
     logs_path: str | None = None
     results: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    validity_audit: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    quality_level: str = "concept_draft"
 
 
 class ManuscriptBuild(SQLModel, table=True):
@@ -298,6 +305,9 @@ class ManuscriptBuild(SQLModel, table=True):
     status: RunStatus = Field(default=RunStatus.PENDING)
     artifact_path: str | None = None
     citation_keys: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    mode: str = "draft"
+    quality_level: str = "concept_draft"
+    validity_audit: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=now_utc)
 
 

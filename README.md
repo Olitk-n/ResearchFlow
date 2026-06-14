@@ -17,6 +17,10 @@ LaTeX manuscripts.
   non-root Docker execution with no network, zero Linux capabilities, and strict resource limits.
 - Result-grounded arXiv projects plus official 2026 ICLR/ICML/NeurIPS template retrieval,
   LaTeX, BibTeX, PDF, template hashes, LLM disclosure, and claim provenance.
+- Scientific-validity gates for dataset-topic fit, registered experiment plans, synthetic-label
+  detection, post-run consistency, submission readiness, and sentence-level provenance.
+- Evidence levels from concept draft through synthetic demonstration, initial experiment,
+  reproducible research, and submission candidate.
 - SSE progress updates, persistent workflow checkpoints, pause/resume, and model-call cost logs.
 - SQLite/in-process mode plus PostgreSQL, Redis, Celery, pgvector semantic paper search, and the
   web application through Docker Compose.
@@ -27,7 +31,8 @@ no related publication exists.
 ## Quick start
 
 中文新手教程：[运行与使用指南](docs/USER_GUIDE.zh-CN.md) ·
-[Git 与 GitHub 版本管理](docs/VERSION_CONTROL.zh-CN.md)
+[Git 与 GitHub 版本管理](docs/VERSION_CONTROL.zh-CN.md) ·
+[科学有效性等级](docs/SCIENTIFIC_VALIDITY.zh-CN.md)
 
 Requirements: Node.js 20+ and `uv`.
 
