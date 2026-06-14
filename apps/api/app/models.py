@@ -208,6 +208,8 @@ class GapCandidate(SQLModel, table=True):
     risks: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     counter_queries: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    submission_readiness: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    alternative_topics: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=now_utc)
 
 

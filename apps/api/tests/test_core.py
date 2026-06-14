@@ -47,6 +47,7 @@ from app.services.experiment_agent import validate_generated_code
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
 from app.services.open_access import safe_public_https_url
 from app.services.scientific_validity import (
+    assess_topic_submission_readiness,
     audit_completed_run,
     audit_dataset_fit,
     audit_experiment_code,
@@ -318,11 +319,12 @@ async def test_mocked_discovery_to_experiment_package(monkeypatch, tmp_path):
             status="completed",
             config_name="default",
             split_name="train",
-            row_count=30,
+            row_count=300,
             schema_json={
-                "prompt": {"types": {"str": 30}, "examples": ["agent task"]},
-                "score": {"types": {"int": 30}, "examples": [1]},
+                "prompt": {"types": {"str": 300}, "examples": ["agent task"]},
+                "score": {"types": {"int": 300}, "examples": [1]},
             },
+            profile_json={"source_total_rows": 300, "complete_snapshot": True},
             content_hash=("4f6bc3ab9b5f15bdf0f9fc919ad65f504a42d43f7e4f3fbfcb1fdbb657e3a689"),
             artifact_path=str(data_root),
         )
@@ -379,7 +381,7 @@ async def test_mocked_discovery_to_experiment_package(monkeypatch, tmp_path):
         ).first()
         assert refreshed.status == "ready"
         assert datasets[0].license == "apache-2.0"
-        assert preparations[0].row_count == 30
+        assert preparations[0].row_count == 300
         assert spec and spec.artifact_path
         assert spec.resource_profile["code_origin"] == "auditable_fallback"
         assert plan_checkpoint
@@ -521,6 +523,71 @@ def test_submission_gate_requires_real_multiseed_statistical_evidence():
     assert not gate.passed
     assert any("Synthetic" in finding for finding in gate.findings)
     assert any("three seeds" in finding for finding in gate.findings)
+
+
+def test_topic_readiness_rejects_tiny_snapshot_and_offers_alternatives():
+    project = ResearchProject(
+        user_id=uuid4(),
+        title="Agent evaluation",
+        direction="LLM agent evaluation",
+    )
+    gap = GapCandidate(
+        project_id=project.id,
+        title="Robust agent evaluation",
+        hypothesis="Trace-aware scoring improves reliability.",
+        rationale="test",
+        confidence=0.8,
+        novelty_score=0.7,
+        feasibility_score=0.85,
+        estimated_cost="low",
+    )
+    dataset = DatasetAsset(
+        project_id=project.id,
+        gap_id=gap.id,
+        source="huggingface",
+        external_id="research/agent-eval",
+        name="research/agent-eval",
+        url="https://example.test",
+        license="apache-2.0",
+        metadata_json={"relevance_score": 3},
+    )
+    preparation = DataPreparation(
+        project_id=project.id,
+        dataset_id=dataset.id,
+        status="completed",
+        row_count=10,
+    )
+    audit = assess_topic_submission_readiness(
+        project, gap, [dataset], preparation,
+    )
+    assert not audit.passed
+    assert "Only 10 usable rows" in " ".join(audit.findings)
+    assert len(audit.details["alternatives"]) == 3
+
+
+def test_submission_gate_accepts_complete_real_task_plan():
+    spec = ExperimentSpec(
+        project_id=uuid4(),
+        gap_id=uuid4(),
+        name="complete task",
+        objective="compare methods",
+        scientific_plan={
+            "target_variable": "measured task success",
+            "evidence_class": "real_task",
+            "expected_sample_count": 500,
+            "split_strategy": "fixed train/validation/test split",
+            "baselines": ["majority", "published baseline"],
+            "seeds": [42, 43, 44],
+            "statistical_analysis": "bootstrap 95% confidence interval",
+        },
+    )
+    gate = submission_gate(
+        spec,
+        {"passed": True, "level": "reproducible_research"},
+        citation_count=12,
+    )
+    assert gate.passed
+    assert gate.level == "submission_candidate"
 
 
 def test_reproducibility_bundle_copies_code_data_card_lock_logs_and_results(tmp_path):
@@ -848,7 +915,7 @@ def test_official_venue_template_is_cached_and_hashed(tmp_path):
 
 async def test_prepared_dataset_hash_matches_exact_file_bytes(monkeypatch):
     async def fake_rows(_dataset_id, max_rows=100):
-        return "default", "train", [{"text": "line one"}, {"text": "第二行"}]
+        return "default", "train", [{"text": "line one"}, {"text": "第二行"}], 2
 
     monkeypatch.setattr(
         "app.services.data_prep.fetch_huggingface_rows",

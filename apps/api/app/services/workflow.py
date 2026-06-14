@@ -48,7 +48,11 @@ from .gaps import (
 from .open_access import ingest_open_access_papers
 from .paper_graph import record_paper_graph
 from .research_graph import research_phase_graph
-from .scientific_validity import audit_dataset_fit, audit_experiment_code
+from .scientific_validity import (
+    assess_topic_submission_readiness,
+    audit_dataset_fit,
+    audit_experiment_code,
+)
 
 
 def emit(session: Session, project_id: UUID, stage: str, message: str, **payload) -> None:
@@ -839,6 +843,18 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
 
             selected_dataset = choose_dataset(assets, minimum_relevance=2)
             if not selected_dataset:
+                readiness = assess_topic_submission_readiness(project, gap, assets)
+                gap.submission_readiness = readiness.as_dict()
+                gap.alternative_topics = readiness.details["alternatives"]
+                session.add(gap)
+                session.commit()
+                emit(
+                    session,
+                    project.id,
+                    "topic_readiness",
+                    "当前选题未找到足以支撑投稿实验的数据；已提供相似可行选题。",
+                    audit=readiness.as_dict(),
+                )
                 raise RuntimeError("没有许可明确且可自动使用的数据集")
             emit(
                 session,
@@ -853,8 +869,25 @@ async def plan_selected_gap(project_id: UUID, gap_id: UUID) -> None:
             session.refresh(preparation)
             dataset_audit = audit_dataset_fit(project, gap, selected_dataset, preparation)
             selected_dataset.validity_audit = dataset_audit.as_dict()
+            readiness = assess_topic_submission_readiness(
+                project, gap, assets, preparation,
+            )
+            gap.submission_readiness = readiness.as_dict()
+            gap.alternative_topics = readiness.details["alternatives"]
             session.add(selected_dataset)
+            session.add(gap)
             session.commit()
+            emit(
+                session,
+                project.id,
+                "topic_readiness",
+                (
+                    "当前选题具备继续构建投稿级实验的基础。"
+                    if readiness.passed
+                    else "当前选题暂不具备投稿实验条件；请修正数据或选择相似可行选题。"
+                ),
+                audit=readiness.as_dict(),
+            )
             if (
                 preparation.status == RunStatus.COMPLETED
                 and not dataset_audit.passed

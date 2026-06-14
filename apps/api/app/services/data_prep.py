@@ -77,9 +77,9 @@ def profile_rows(rows: list[dict[str, Any]]) -> tuple[dict, dict]:
 
 async def fetch_huggingface_rows(
     dataset_id: str,
-    max_rows: int = 100,
-) -> tuple[str, str, list[dict[str, Any]]]:
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    max_rows: int = 5000,
+) -> tuple[str, str, list[dict[str, Any]], int]:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         splits_response = await client.get(
             "https://datasets-server.huggingface.co/splits",
             params={"dataset": dataset_id},
@@ -94,18 +94,26 @@ async def fetch_huggingface_rows(
         )
         config_name = split["config"]
         split_name = split["split"]
-        rows_response = await client.get(
-            "https://datasets-server.huggingface.co/first-rows",
-            params={
-                "dataset": dataset_id,
-                "config": config_name,
-                "split": split_name,
-            },
-        )
-        rows_response.raise_for_status()
-        source_rows = rows_response.json().get("rows") or []
-    rows = [_normalize_value(item.get("row") or {}) for item in source_rows[:max_rows]]
-    return config_name, split_name, rows
+        total_rows = int(split.get("num_rows") or 0)
+        rows: list[dict[str, Any]] = []
+        target_rows = min(total_rows or max_rows, max_rows)
+        for offset in range(0, target_rows, 100):
+            rows_response = await client.get(
+                "https://datasets-server.huggingface.co/rows",
+                params={
+                    "dataset": dataset_id,
+                    "config": config_name,
+                    "split": split_name,
+                    "offset": offset,
+                    "length": min(100, target_rows - offset),
+                },
+            )
+            rows_response.raise_for_status()
+            source_rows = rows_response.json().get("rows") or []
+            rows.extend(_normalize_value(item.get("row") or {}) for item in source_rows)
+            if not source_rows:
+                break
+    return config_name, split_name, rows, total_rows or len(rows)
 
 
 async def prepare_dataset(
@@ -126,7 +134,7 @@ async def prepare_dataset(
         preparation.profile_json = {"reason": "数据许可不在自动使用白名单"}
         return preparation
 
-    config_name, split_name, rows = await fetch_huggingface_rows(dataset.external_id)
+    config_name, split_name, rows, total_rows = await fetch_huggingface_rows(dataset.external_id)
     if not rows:
         preparation.status = RunStatus.BLOCKED
         preparation.profile_json = {"reason": "数据集未返回可处理样本"}
@@ -146,13 +154,21 @@ async def prepare_dataset(
     digest = hashlib.sha256(normalized_bytes).hexdigest()
     (root / "prepared.jsonl").write_bytes(normalized_bytes)
     schema, profile = profile_rows(rows)
+    complete_snapshot = len(rows) >= total_rows
+    profile.update({
+        "source_total_rows": total_rows,
+        "complete_snapshot": complete_snapshot,
+        "sampling_strategy": "complete split" if complete_snapshot else "deterministic first 5000 rows",
+    })
     data_card = {
         "dataset": dataset.external_id,
         "source_url": dataset.url,
         "license": dataset.license,
         "config": config_name,
         "split": split_name,
-        "sample_rows": len(rows),
+        "prepared_rows": len(rows),
+        "source_total_rows": total_rows,
+        "complete_snapshot": complete_snapshot,
         "content_hash": digest,
         "schema": schema,
         "profile": profile,
@@ -160,7 +176,11 @@ async def prepare_dataset(
             "Fetched through Hugging Face Dataset Viewer",
             "Normalized nested values to JSON-compatible structures",
             "Sorted object keys and serialized as UTF-8 JSONL",
-            "Limited to a reproducible preview sample",
+            (
+                "Stored the complete selected split"
+                if complete_snapshot
+                else "Stored a deterministic capped snapshot; submission requires a justified sampling plan"
+            ),
         ],
     }
     (root / "data-card.json").write_text(

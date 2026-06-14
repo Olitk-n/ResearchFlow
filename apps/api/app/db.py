@@ -32,6 +32,10 @@ def create_db_and_tables() -> None:
                 text("ALTER TABLE modelconfig ADD COLUMN api_key_hint VARCHAR")
             )
     additive_columns = {
+        "gapcandidate": {
+            "submission_readiness": "JSON NOT NULL DEFAULT '{}'",
+            "alternative_topics": "JSON NOT NULL DEFAULT '[]'",
+        },
         "datasetasset": {
             "validity_audit": "JSON NOT NULL DEFAULT '{}'",
             "human_confirmed": "BOOLEAN NOT NULL DEFAULT 0",

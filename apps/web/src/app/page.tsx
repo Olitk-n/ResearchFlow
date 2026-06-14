@@ -345,6 +345,30 @@ function GapCard({
         <span>可行性 <b>{Math.round(gap.feasibility_score * 100)}</b></span>
         <span>成本 <b>{gap.estimated_cost.split("：")[0]}</b></span>
       </div>
+      {gap.submission_readiness?.level && (
+        <div className={`constraint-note ${gap.submission_readiness.passed ? "readiness-pass" : ""}`}>
+          <b>
+            {gap.submission_readiness.passed
+              ? "投稿规划：具备继续实验的基础"
+              : "投稿规划：当前选题暂不可直接投稿"}
+          </b>
+          {gap.submission_readiness.findings?.map((finding) => (
+            <div key={finding}>• {finding}</div>
+          ))}
+          {!gap.submission_readiness.passed && gap.alternative_topics?.length > 0 && (
+            <details>
+              <summary>查看相似可行选题</summary>
+              {gap.alternative_topics.map((topic) => (
+                <div className="alternative-topic" key={topic.title}>
+                  <strong>{topic.title}</strong>
+                  <p>{topic.why_feasible}</p>
+                  <small>最低实验要求：{topic.minimum_experiment}</small>
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
       <details><summary>风险与反向验证</summary>
         <ul>{gap.risks.map((risk) => <li key={risk}>{risk}</li>)}</ul>
         <div className="query-list">{gap.counter_queries.map((query) => <code key={query}>{query}</code>)}</div>

@@ -104,6 +104,22 @@ export type Gap = {
   estimated_cost: string;
   risks: string[];
   counter_queries: string[];
+  submission_readiness: {
+    passed?: boolean;
+    score?: number;
+    level?: string;
+    findings?: string[];
+    details?: {
+      usable_dataset_count?: number;
+      prepared_rows?: number;
+      meaning?: string;
+    };
+  };
+  alternative_topics: Array<{
+    title: string;
+    why_feasible: string;
+    minimum_experiment: string;
+  }>;
 };
 
 export type GapValidation = {

@@ -24,6 +24,7 @@ SYNTHETIC_PATTERNS = (
     r"simulated? (label|target|truth|value)",
     r"synthetic (label|target|truth|value)",
 )
+MIN_SUBMISSION_ROWS = 200
 
 
 @dataclass(slots=True)
@@ -80,8 +81,17 @@ def audit_dataset_fit(
         findings.append("Dataset license is missing.")
     if not matched:
         findings.append("Prepared data fields and examples do not match the research topic.")
-    if preparation.row_count < 20:
-        findings.append("Prepared sample has fewer than 20 rows.")
+    if preparation.row_count < MIN_SUBMISSION_ROWS:
+        findings.append(
+            f"Prepared data has fewer than {MIN_SUBMISSION_ROWS} rows; "
+            "it is insufficient for the default submission track."
+        )
+    complete_snapshot = preparation.profile_json.get("complete_snapshot")
+    if complete_snapshot is False:
+        findings.append(
+            "Prepared data is a capped snapshot rather than the complete split; "
+            "a preregistered sampling design is required."
+        )
     target_candidates = [
         name
         for name, descriptor in preparation.schema_json.items()
@@ -89,7 +99,13 @@ def audit_dataset_fit(
     ]
     if not target_candidates:
         findings.append("No numeric target candidate was found in the prepared schema.")
-    passed = bool(dataset.license and matched and target_candidates)
+    passed = bool(
+        dataset.license
+        and matched
+        and target_candidates
+        and preparation.row_count >= MIN_SUBMISSION_ROWS
+        and complete_snapshot is not False
+    )
     return AuditResult(
         passed=passed,
         score=score,
@@ -99,9 +115,82 @@ def audit_dataset_fit(
             "matched_topic_terms": matched,
             "target_candidates": target_candidates,
             "sample_unit": "one prepared JSONL row",
+            "prepared_rows": preparation.row_count,
+            "source_total_rows": preparation.profile_json.get("source_total_rows"),
+            "complete_snapshot": preparation.profile_json.get("complete_snapshot", False),
             "human_confirmation_required": not passed,
         },
     )
+
+
+def assess_topic_submission_readiness(
+    project: ResearchProject,
+    gap: GapCandidate,
+    datasets: list[DatasetAsset],
+    preparation: DataPreparation | None = None,
+) -> AuditResult:
+    usable = [
+        item for item in datasets
+        if item.license and int(item.metadata_json.get("relevance_score") or 0) >= 2
+    ]
+    findings: list[str] = []
+    if not usable:
+        findings.append("No clearly licensed, topic-matched dataset was found.")
+    if preparation is None:
+        findings.append("No dataset snapshot has been prepared and inspected.")
+    elif preparation.row_count < MIN_SUBMISSION_ROWS:
+        findings.append(
+            f"Only {preparation.row_count} usable rows were prepared; "
+            f"the default submission track requires at least {MIN_SUBMISSION_ROWS}."
+        )
+    elif preparation.profile_json.get("complete_snapshot") is False:
+        findings.append(
+            "The prepared data is only a capped snapshot; use the complete split "
+            "or register a defensible sampling design."
+        )
+    if gap.feasibility_score < 0.65:
+        findings.append("The candidate feasibility score is below the submission planning threshold.")
+    passed = not findings
+    alternatives = build_similar_feasible_topics(project.direction, gap, usable)
+    return AuditResult(
+        passed=passed,
+        score=min(1.0, gap.feasibility_score * (1.0 if usable else 0.45)),
+        level="submission_plannable" if passed else "topic_revision_required",
+        findings=findings,
+        details={
+            "usable_dataset_count": len(usable),
+            "prepared_rows": preparation.row_count if preparation else 0,
+            "alternatives": alternatives,
+            "meaning": (
+                "This is a planning assessment, not a guarantee of acceptance or publication."
+            ),
+        },
+    )
+
+
+def build_similar_feasible_topics(
+    direction: str,
+    gap: GapCandidate,
+    usable_datasets: list[DatasetAsset],
+) -> list[dict[str, Any]]:
+    dataset_name = usable_datasets[0].name if usable_datasets else "a licensed public benchmark"
+    return [
+        {
+            "title": f"{direction} 的可复现基线与失败模式复核",
+            "why_feasible": f"可围绕 {dataset_name} 复现公开基线，并报告多种子误差与失败类型。",
+            "minimum_experiment": "至少一个公开基线、3个随机种子、独立测试集和95%置信区间。",
+        },
+        {
+            "title": f"{direction} 在预算约束下的性能、成本与延迟权衡",
+            "why_feasible": "无需声称发明全新模型，可形成可审计的多目标实证研究。",
+            "minimum_experiment": "至少3种方法或配置，统一预算，报告性能、成本、延迟和显著性。",
+        },
+        {
+            "title": f"{direction} 的数据质量敏感性与稳健性分析",
+            "why_feasible": f"可使用 {dataset_name} 的真实字段构造缺失、噪声或分布切片，不生成虚假真值。",
+            "minimum_experiment": "预注册扰动、真实标签、基线对照、多种子和分层误差分析。",
+        },
+    ]
 
 
 def audit_experiment_code(code: str, scientific_plan: dict[str, Any]) -> AuditResult:
@@ -161,10 +250,19 @@ def audit_completed_run(spec: ExperimentSpec, results: dict[str, Any]) -> AuditR
     result_seeds = payload.get("seeds") or ([payload["seed"]] if "seed" in payload else [])
     if seeds and sorted(seeds) != sorted(result_seeds):
         findings.append("Run seeds do not match the registered scientific plan.")
+    per_seed = payload.get("per_seed_metrics")
+    if len(seeds) >= 3 and (not isinstance(per_seed, list) or len(per_seed) < len(seeds)):
+        findings.append("Run did not emit one metric record per registered seed.")
+    uncertainty = payload.get("uncertainty")
+    if plan.get("statistical_analysis") and not isinstance(uncertainty, dict):
+        findings.append("Run did not emit structured uncertainty estimates.")
+    baseline_metrics = payload.get("baseline_metrics")
+    if plan.get("baselines") and not isinstance(baseline_metrics, dict):
+        findings.append("Run did not emit baseline metrics.")
     synthetic = bool((spec.validity_audit or {}).get("details", {}).get("synthetic"))
     level = "synthetic_demonstration" if synthetic else "initial_experiment"
     passed = not findings
-    if passed and len(result_seeds) >= 3 and payload.get("uncertainty") and plan.get("baselines"):
+    if passed and len(result_seeds) >= 3 and uncertainty and baseline_metrics:
         level = "reproducible_research"
     return AuditResult(
         passed=passed,
@@ -196,6 +294,16 @@ def submission_gate(
         findings.append("At least three seeds are required.")
     if not plan.get("statistical_analysis"):
         findings.append("A statistical uncertainty analysis is required.")
+    if plan.get("evidence_class") != "real_task":
+        findings.append("Submission requires a real task with measured inputs and targets.")
+    if not plan.get("target_variable") or str(plan.get("target_variable")).casefold().startswith("none"):
+        findings.append("A measured target variable is required.")
+    split_strategy = str(plan.get("split_strategy") or "").casefold()
+    if not any(term in split_strategy for term in ("test", "held-out", "held out", "cross-validation")):
+        findings.append("An independent test or cross-validation strategy is required.")
+    expected_rows = int(plan.get("expected_sample_count") or 0)
+    if expected_rows < MIN_SUBMISSION_ROWS:
+        findings.append(f"At least {MIN_SUBMISSION_ROWS} prepared task rows are required by the default gate.")
     if citation_count < 3:
         findings.append("At least three resolved literature citations are required.")
     passed = not findings
@@ -259,6 +367,29 @@ def copy_reproducibility_bundle(manuscript_root: Path, experiment_root: Path | N
 
 
 def backfill_scientific_validity(session: Session) -> None:
+    for gap in session.exec(select(GapCandidate)).all():
+        project = session.get(ResearchProject, gap.project_id)
+        datasets = session.exec(
+            select(DatasetAsset).where(
+                DatasetAsset.project_id == gap.project_id,
+                DatasetAsset.gap_id == gap.id,
+            )
+        ).all()
+        preparation = None
+        if datasets:
+            preparation = session.exec(
+                select(DataPreparation)
+                .where(DataPreparation.dataset_id.in_([item.id for item in datasets]))
+                .order_by(DataPreparation.created_at.desc())
+            ).first()
+        if project:
+            readiness = assess_topic_submission_readiness(
+                project, gap, datasets, preparation,
+            )
+            gap.submission_readiness = readiness.as_dict()
+            gap.alternative_topics = readiness.details["alternatives"]
+            session.add(gap)
+
     specs = session.exec(select(ExperimentSpec)).all()
     for spec in specs:
         dataset_id = (spec.resource_profile or {}).get("dataset_id")
