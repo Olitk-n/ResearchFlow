@@ -1041,6 +1041,11 @@ function ManuscriptView({
           action: string;
         }>;
       };
+      manuscript_compilation?: {
+        passed: boolean;
+        status: string;
+        message: string;
+      };
     };
   }>;
   hasCompletedRun: boolean;
@@ -1116,7 +1121,15 @@ function ManuscriptView({
               ))}
             </div>
           )}
-          <p>{latest ? (latest.status === "completed" ? "LaTeX、BibTeX 与 PDF 已完成。" : "LaTeX 与 BibTeX 已完成；本机缺少 LaTeX 编译器。") : "没有完成实验时只能生成明确标注的研究草稿。"}</p>
+          <p>
+            {latest
+              ? latest.validity_audit?.pre_submission_review?.passed === false
+                ? "论文工程已生成，但科学或写作预审未通过；请先处理上方问题。"
+                : latest.validity_audit?.manuscript_compilation?.passed
+                  ? "LaTeX、BibTeX 与 PDF 已完成。"
+                  : "科学预审已通过，LaTeX 与 BibTeX 已完成，但 PDF 尚未编译；请安装或检查 LaTeX 编译器。"
+              : "没有完成实验时只能生成明确标注的研究草稿。"}
+          </p>
           <div className="build-controls">
             <label>目标模板
               <select value={target} onChange={(event) => setTarget(event.target.value)}>

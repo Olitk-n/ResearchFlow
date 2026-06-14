@@ -920,6 +920,15 @@ async def manuscript(
     validity_audit = {
         **base_validity_audit,
         "pre_submission_review": pre_submission_review,
+        "manuscript_compilation": {
+            "passed": compiled,
+            "status": "pdf_completed" if compiled else "pdf_not_compiled",
+            "message": (
+                "LaTeX, BibTeX, and PDF were generated."
+                if compiled
+                else "LaTeX and BibTeX were generated, but PDF compilation was unavailable or failed."
+            ),
+        },
     }
     review_passed = body.mode != "submission" or pre_submission_review["passed"]
     build_quality_level = (

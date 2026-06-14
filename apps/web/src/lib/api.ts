@@ -292,6 +292,11 @@ export type ProjectDetail = {
           action: string;
         }>;
       };
+      manuscript_compilation?: {
+        passed: boolean;
+        status: string;
+        message: string;
+      };
     };
   }>;
   workflow_checkpoints: Array<{
