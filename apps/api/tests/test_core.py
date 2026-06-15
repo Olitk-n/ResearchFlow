@@ -32,8 +32,7 @@ from app.models import (
     WorkflowCheckpoint,
     WorkflowControl,
 )
-from app.providers.datasets import DatasetResult, dataset_relevance_score
-from app.providers.datasets import aggregate_datasets
+from app.providers.datasets import DatasetResult, aggregate_datasets, dataset_relevance_score
 from app.providers.literature import (
     NormalizedPaper,
     _crossref_open_pdf,
@@ -54,10 +53,11 @@ from app.services.executors import execute_experiment
 from app.services.experiment_agent import (
     baseline_path_diagnostics,
     fallback_experiment,
+    feature_candidates,
     validate_generated_code,
 )
 from app.services.gaps import evidence_from_papers, generate_gap_drafts
-from app.services.manuscript_agent import ManuscriptDraft
+from app.services.manuscript_agent import ManuscriptDraft, validate_manuscript_scope
 from app.services.open_access import safe_public_https_url
 from app.services.scientific_validity import (
     assess_topic_submission_readiness,
@@ -182,7 +182,7 @@ def test_submission_review_rejects_short_sparsely_cited_manuscript(tmp_path):
     )
 
     assert review["passed"] is False
-    assert review["recommendation"] == "major_revision"
+    assert review["recommendation"] == "blocked"
     assert review["evidence"]["used_citation_count"] == 1
     assert review["evidence"]["manuscript_word_count"] < 1800
     assert "baseline" in review["evidence"]["missing_result_mentions"]
@@ -891,6 +891,68 @@ def test_random_ground_truth_is_labeled_synthetic_demonstration():
     assert audit.passed
     assert audit.level == "synthetic_demonstration"
     assert audit.details["synthetic"]
+
+
+def test_identifier_fields_are_excluded_from_model_features():
+    preparation = DataPreparation(
+        project_id=uuid4(),
+        dataset_id=uuid4(),
+        status="completed",
+        row_count=300,
+        schema_json={
+            "id": {"types": {"int": 300}, "examples": [1, 2, 3]},
+            "row_id": {"types": {"str": 300}, "examples": ["a", "b", "c"]},
+            "question": {"types": {"str": 300}, "examples": ["q1", "q2", "q3"]},
+            "response_label": {"types": {"bool": 300}, "examples": [True, False]},
+        },
+    )
+    assert feature_candidates(preparation, "response_label") == ["question"]
+
+
+def test_manuscript_rejects_unmeasured_cost_and_latency_claims():
+    draft = ManuscriptDraft(
+        title="Accuracy, Cost, and Latency Trade-offs in Agent Performance",
+        abstract="We evaluate cost and latency under a fixed budget.",
+        introduction="Measured evaluation.",
+        related_work="Related work [paper1].",
+        method="We classify measured labels.",
+        results="Accuracy was measured.",
+        limitations="Cost was not logged.",
+        conclusion="The method improves accuracy.",
+        mode="submission",
+    )
+    with pytest.raises(ValueError, match="unmeasured quantities"):
+        validate_manuscript_scope(
+            draft,
+            {
+                "primary_metric": {"name": "accuracy", "value": 0.7},
+                "validity_audit": {"details": {"synthetic": False}},
+                "_scientific_plan": {"model": "multinomial Naive Bayes"},
+            },
+        )
+
+
+def test_manuscript_rejects_synthetic_label_for_real_dataset():
+    draft = ManuscriptDraft(
+        title="Measured Response Correctness Classification",
+        abstract="This synthetic experiment uses a public measured dataset.",
+        introduction="Measured evaluation.",
+        related_work="Related work [paper1].",
+        method="We classify measured labels.",
+        results="Accuracy was measured.",
+        limitations="The scope is limited.",
+        conclusion="The result is reproducible.",
+        mode="submission",
+    )
+    with pytest.raises(ValueError, match="incorrectly described as synthetic"):
+        validate_manuscript_scope(
+            draft,
+            {
+                "primary_metric": {"name": "accuracy", "value": 0.7},
+                "validity_audit": {"details": {"synthetic": False}},
+                "_scientific_plan": {"model": "multinomial Naive Bayes"},
+            },
+        )
 
 
 def test_run_audit_rejects_registered_parameter_mismatch():

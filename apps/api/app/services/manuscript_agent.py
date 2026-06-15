@@ -20,6 +20,54 @@ class ManuscriptDraft:
     mode: str
 
 
+def _contains_key(value: Any, markers: tuple[str, ...]) -> bool:
+    if isinstance(value, dict):
+        return any(
+            any(marker in str(key).casefold() for marker in markers)
+            or _contains_key(item, markers)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_key(item, markers) for item in value)
+    return False
+
+
+def validate_manuscript_scope(
+    draft: ManuscriptDraft,
+    experiment_results: dict[str, Any] | None,
+) -> None:
+    results = experiment_results or {}
+    joined = " ".join(
+        getattr(draft, field)
+        for field in (
+            "title", "abstract", "introduction", "method",
+            "results", "limitations", "conclusion",
+        )
+    ).casefold()
+    synthetic = bool(
+        results.get("validity_audit", {}).get("details", {}).get("synthetic")
+    )
+    if not synthetic and re.search(r"\bsynthetic (study|experiment|data|dataset|demonstration)\b", joined):
+        raise ValueError("real measured data was incorrectly described as synthetic")
+    unsupported = []
+    for label, terms, keys in (
+        ("cost", ("cost", "monetary", "budget"), ("cost", "price", "usd", "token")),
+        ("latency", ("latency", "runtime", "wall-clock"), ("latency", "runtime", "duration", "elapsed")),
+        ("energy", ("energy", "power consumption"), ("energy", "power", "joule", "watt")),
+    ):
+        if any(term in joined for term in terms) and not _contains_key(results, keys):
+            unsupported.append(label)
+    if unsupported:
+        raise ValueError(
+            "manuscript claims unmeasured quantities: " + ", ".join(unsupported)
+        )
+    plan = results.get("_scientific_plan") or {}
+    model = str(plan.get("model") or "").casefold()
+    title = draft.title.casefold()
+    if "agent performance" in title and "agent" not in model:
+        raise ValueError("title claims agent performance but the experiment evaluates a non-agent model")
+
+
 def format_verified_results(experiment_results: dict[str, Any]) -> str:
     primary = experiment_results.get("primary_metric") or {}
     uncertainty = experiment_results.get("uncertainty") or {}
@@ -76,8 +124,14 @@ def fallback_manuscript(
             "No completed experiment is available. This section contains no empirical "
             "claim and records the planned evaluation only."
         )
-    return ManuscriptDraft(
-        title=f"Cross-Benchmark Robustness and Failure Modes in {project.direction}",
+    plan = (experiment_results or {}).get("_scientific_plan") or {}
+    target = str(plan.get("target_variable") or "the measured outcome").replace("_", " ")
+    if target.casefold() in {"response label", "correct", "is correct"}:
+        target = "response correctness"
+    model = str(plan.get("model") or "auditable baseline")
+    model = re.sub(r"\s+over prepared row fields$", "", model, flags=re.IGNORECASE)
+    draft = ManuscriptDraft(
+        title=f"Predicting {target.title()} with a Reproducible {model.title()} Baseline",
         abstract=(
             f"We study a low-coverage research candidate in {project.direction}. "
             "The workflow binds literature evidence, licensed data, "
@@ -117,6 +171,8 @@ def fallback_manuscript(
         ),
         mode=mode,
     )
+    validate_manuscript_scope(draft, experiment_results)
+    return draft
 
 
 async def generate_manuscript(
@@ -164,6 +220,11 @@ async def generate_manuscript(
             "test, sample count, and seeds exactly as supplied. Do not dump raw JSON "
             "into prose and do not describe statistical significance unless the supplied "
             "p-value and test support that wording. For submission mode, produce a "
+            "Title and claims must match the implemented model, target, and measured "
+            "result fields. Never claim cost, latency, energy, or agent-level performance "
+            "unless those quantities are explicitly present in the supplied results. "
+            "Never call measured public data synthetic when the supplied validity audit "
+            "says synthetic=false. "
             "substantive manuscript rather than a synopsis: abstract 150-250 words, "
             "introduction at least 400 words, related work at least 300 words, method at "
             "least 500 words, results at least 450 words, limitations at least 200 words, "
@@ -212,7 +273,7 @@ async def generate_manuscript(
         ).casefold()
         if "synthetic" not in joined:
             raise ValueError("synthetic experiment was not explicitly disclosed")
-    return ManuscriptDraft(
+    draft = ManuscriptDraft(
         title=str(response["title"])[:400],
         abstract=str(response["abstract"])[:4000],
         introduction=str(response["introduction"])[:12_000],
@@ -223,3 +284,5 @@ async def generate_manuscript(
         conclusion=str(response["conclusion"])[:8000],
         mode=mode,
     )
+    validate_manuscript_scope(draft, experiment_results)
+    return draft

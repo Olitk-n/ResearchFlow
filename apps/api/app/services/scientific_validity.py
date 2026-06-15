@@ -466,12 +466,22 @@ def submission_gate(
         findings.append("Completed run failed the post-run consistency audit.")
     if run_audit.get("level") == "synthetic_demonstration":
         findings.append("Synthetic demonstrations cannot be promoted to submission manuscripts.")
-    if not plan.get("baselines"):
-        findings.append("At least one baseline is required.")
+    if len(plan.get("baselines") or []) < 2:
+        findings.append("At least two credible baselines are required.")
     if len(plan.get("seeds") or []) < 3:
         findings.append("At least three seeds are required.")
     if not plan.get("statistical_analysis"):
         findings.append("A statistical uncertainty analysis is required.")
+    feature_mapping = plan.get("field_mapping", {}).get("features") or []
+    leaking_features = [
+        name for name in feature_mapping
+        if str(name).casefold().replace("-", "_") in {"id", "index", "row_id", "rowid", "uuid"}
+        or str(name).casefold().replace("-", "_").endswith("_id")
+    ]
+    if leaking_features:
+        findings.append(
+            "Identifier-like features may leak row identity: " + ", ".join(leaking_features) + "."
+        )
     if plan.get("evidence_class") != "real_task":
         findings.append("Submission requires a real task with measured inputs and targets.")
     if not plan.get("target_variable") or str(plan.get("target_variable")).casefold().startswith("none"):

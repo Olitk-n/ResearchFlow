@@ -865,9 +865,16 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             {view === "paper" && (
               <ManuscriptView
                 builds={detail?.manuscripts || []}
-                hasCompletedRun={Boolean(detail?.experiment_runs.some(
-                  (run) => run.status === "completed" && run.quality_level === "reproducible_research",
-                ))}
+                submissionReady={Boolean(
+                  detail?.experiment_runs.some(
+                    (run) => run.spec_id === detail?.experiments.at(-1)?.id
+                      && run.status === "completed"
+                      && run.quality_level === "reproducible_research",
+                  )
+                  && detail?.experiments.at(-1)?.validity_audit?.passed
+                  && Array.isArray(detail?.experiments.at(-1)?.scientific_plan?.baselines)
+                  && (detail?.experiments.at(-1)?.scientific_plan.baselines as unknown[]).length >= 2
+                )}
                 busy={busy === "manuscript"}
                 onGenerate={generateManuscript}
                 onDownload={() => downloadArtifact(selected.id, "manuscript", token)}
@@ -1045,7 +1052,7 @@ function ExperimentView({
 
 function ManuscriptView({
   builds,
-  hasCompletedRun,
+  submissionReady,
   busy,
   onGenerate,
   onDownload,
@@ -1077,7 +1084,7 @@ function ManuscriptView({
       };
     };
   }>;
-  hasCompletedRun: boolean;
+  submissionReady: boolean;
   busy: boolean;
   onGenerate: (
     target: string,
@@ -1173,7 +1180,7 @@ function ManuscriptView({
             <label>生成模式
               <select value={mode} onChange={(event) => setMode(event.target.value as "draft" | "submission")}>
                 <option value="draft">研究草稿</option>
-                <option value="submission" disabled={!hasCompletedRun}>结果投稿稿</option>
+                <option value="submission" disabled={!submissionReady}>结果投稿稿</option>
               </select>
             </label>
           </div>
@@ -1231,7 +1238,12 @@ function ManuscriptView({
               投稿模式必须指定具体出版物和官方作者指南；“SCI/EI”本身不是一种统一模板。
             </div>
           )}
-          {!hasCompletedRun && <div className="constraint-note">尚无完成的实验运行，结果投稿模式已锁定。</div>}
+          {!submissionReady && (
+            <div className="constraint-note">
+              投稿模式尚未解锁：需要真实任务、无标识符泄漏、至少两个基线、多次划分、
+              匹配的统计检验和通过审计的可复现实验。
+            </div>
+          )}
           <ul>
             <li><Check />引用键与论文证据绑定</li>
             <li><Check />数字只来自已完成运行</li>
@@ -1250,22 +1262,31 @@ function ManuscriptView({
               venueHumanVerified,
             )}
             disabled={busy || (
-              requiresPublication
-              && mode === "submission"
+              mode === "submission"
               && (
-                !publicationName
-                || !authorGuideUrl
-                || !venueEvidenceUrl
-                || !venueClaim
-                || !venueVerifiedOn
-                || !venueHumanVerified
+                !submissionReady
+                || (
+                  requiresPublication
+                  && (
+                    !publicationName
+                    || !authorGuideUrl
+                    || !venueEvidenceUrl
+                    || !venueClaim
+                    || !venueVerifiedOn
+                    || !venueHumanVerified
+                  )
+                )
               )
             )}
           >
             {busy ? <LoaderCircle className="spin" /> : <Sparkles />}
             生成 {target.toUpperCase()} {mode === "draft" ? "草稿" : "投稿稿"}
           </button>
-          <button className="secondary wide" disabled={!latest} onClick={onDownload}>
+          <button
+            className="secondary wide"
+            disabled={!latest || latest.status === "blocked"}
+            onClick={onDownload}
+          >
             <Download />下载论文工程
           </button>
         </div>

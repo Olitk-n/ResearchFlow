@@ -746,25 +746,28 @@ async def manuscript(
     ).all()
     if not gap or not papers:
         raise HTTPException(status_code=409, detail="证据不足，无法生成稿件")
-    completed_run = session.exec(
-        select(ExperimentRun)
-        .join(ExperimentSpec)
-        .where(
-            ExperimentSpec.project_id == project.id,
-            ExperimentRun.status == RunStatus.COMPLETED,
-        )
-        .order_by(ExperimentRun.finished_at.desc())
-    ).first()
-    if body.mode == "submission" and not completed_run:
-        raise HTTPException(
-            status_code=409,
-            detail="结果稿必须基于已完成的实验运行",
-        )
     latest_spec = session.exec(
         select(ExperimentSpec)
         .where(ExperimentSpec.project_id == project.id)
         .order_by(ExperimentSpec.created_at.desc())
     ).first()
+    completed_run = (
+        session.exec(
+            select(ExperimentRun)
+            .where(
+                ExperimentRun.spec_id == latest_spec.id,
+                ExperimentRun.status == RunStatus.COMPLETED,
+            )
+            .order_by(ExperimentRun.finished_at.desc())
+        ).first()
+        if latest_spec
+        else None
+    )
+    if body.mode == "submission" and not completed_run:
+        raise HTTPException(
+            status_code=409,
+            detail="结果稿必须基于最新实验规格的已完成运行",
+        )
     gate_audit = None
     if body.mode == "submission":
         if not latest_spec or not completed_run:
@@ -843,7 +846,15 @@ async def manuscript(
                         ],
                     },
                 )
-    experiment_results = completed_run.results if completed_run else None
+    experiment_results = (
+        {
+            **completed_run.results,
+            "_scientific_plan": latest_spec.scientific_plan if latest_spec else {},
+            "_experiment_name": latest_spec.name if latest_spec else None,
+        }
+        if completed_run
+        else None
+    )
     model_config = default_model_config(session, project.user_id)
     try:
         draft = await generate_manuscript(

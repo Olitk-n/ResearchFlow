@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from jinja2 import Template
@@ -315,7 +316,19 @@ def safe_key(title: str, index: int) -> str:
 
 
 def latex_escape(text: str, citation_keys: list[str]) -> str:
-    escaped = text
+    escaped = text.replace("**", "").replace("`", "")
+    for symbol, replacement in {
+        "α": "alpha",
+        "β": "beta",
+        "γ": "gamma",
+        "δ": "delta",
+        "μ": "mu",
+        "σ": "sigma",
+        "±": "+/-",
+        "≤": "<=",
+        "≥": ">=",
+    }.items():
+        escaped = escaped.replace(symbol, replacement)
     placeholders = {}
     for index, key in enumerate(citation_keys, start=1):
         marker = f"RFCITATION{index}RF"
@@ -794,6 +807,11 @@ def build_manuscript(
     pdflatex = find_executable("pdflatex")
     bibtex = find_executable("bibtex")
     if pdflatex and bibtex and get_settings().app_env != "test":
+        for stale_name in (
+            "main.pdf", "main.aux", "main.bbl", "main.blg",
+            "main.log", "main.out",
+        ):
+            (root / stale_name).unlink(missing_ok=True)
         for command in (
             [pdflatex, "-interaction=nonstopmode", "main.tex"],
             [bibtex, "main"],
@@ -804,7 +822,17 @@ def build_manuscript(
             if result.returncode:
                 break
         else:
-            compiled = True
+            log_text = (root / "main.log").read_text(
+                encoding="utf-8", errors="ignore",
+            ) if (root / "main.log").exists() else ""
+            compiled = not any(
+                marker in log_text
+                for marker in (
+                    "LaTeX Error:",
+                    "Undefined control sequence",
+                    "There were undefined citations",
+                )
+            ) and (root / "main.pdf").exists()
     write_artifact_index(root)
     return root, compiled, citation_keys
 
@@ -928,13 +956,28 @@ def build_pre_submission_review(
             "No completed reproducibility bundle is attached.",
             "Attach code, dependency lock, data fingerprint, commands, logs, and result files.",
         )
-    if submission_mode and baseline_count < 1:
+    if submission_mode and baseline_count < 2:
         add(
             "critical",
             "comparison",
-            "No valid baseline result is available.",
-            "Run at least one accepted baseline under the same data split and metric definition.",
+            f"Only {baseline_count} valid baseline result is available.",
+            "Run at least two credible baselines under the same data split and metric definition.",
         )
+    plan = results.get("_scientific_plan") or {}
+    statistical_plan = str(plan.get("statistical_analysis") or "").casefold()
+    test_name = str((results.get("statistical_test") or {}).get("name") or "").casefold()
+    if submission_mode and statistical_plan and test_name:
+        planned_mcnemar = "mcnemar" in statistical_plan
+        observed_mcnemar = "mcnemar" in test_name
+        planned_t = "t-test" in statistical_plan or "paired t" in statistical_plan
+        observed_t = "t_test" in test_name or "paired_t" in test_name
+        if planned_mcnemar != observed_mcnemar or planned_t != observed_t:
+            add(
+                "critical",
+                "statistics",
+                "The manuscript plan and executed statistical test do not match.",
+                "Regenerate the experiment and manuscript from one registered statistical plan.",
+            )
     if submission_mode and ablation_count < 2:
         add(
             "major",
